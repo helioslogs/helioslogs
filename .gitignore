@@ -1,0 +1,7 @@
+.idea
+*.code-workspace
+frontend/node_modules
+.claude
+target
+*.swap
+

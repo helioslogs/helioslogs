@@ -1,0 +1,59 @@
+# Supply-chain guard. Run: `cargo deny check`
+#
+# Three policies live here:
+#   1. [advisories] — RUSTSEC advisories; fail on vulnerabilities/unmaintained.
+#   2. [licenses] — allowlist of licenses permitted in the dependency tree.
+#   3. [bans] — crypto boundary: Helios routes ALL crypto through src/crypto/
+#      (the seam), backed by aws-lc-rs, so the non-FIPS crypto crates are banned.
+
+[advisories]
+# `paste` (RUSTSEC-2024-0436) is unmaintained/archived but NOT vulnerable. It is a
+# build-time proc-macro pulled only by tikv-jemalloc-ctl (used in src/memstats.rs
+# for `--verbose` memory stats). jemalloc-ctl still requires paste as of 0.7.0, so
+# no upgrade drops it without forking upstream. Ignore this one advisory until
+# tikv-jemalloc-ctl moves off paste; revisit on the next jemalloc-family bump.
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time proc-macro via tikv-jemalloc-ctl; no upgrade drops it; not a vulnerability" },
+]
+
+[licenses]
+# Permissive licenses we accept in dependencies, plus Helios's own dual license.
+# Deliberately NOT including LGPL/GPL: r-efi is the only LGPL crate and is
+# multi-licensed (MIT OR Apache-2.0 OR LGPL), so MIT/Apache below satisfy it
+# without pulling copyleft into the tree.
+allow = [
+    "AGPL-3.0-only",                # Helios itself
+    "LicenseRef-Appbird-Commercial", # Helios itself (commercial option)
+    "Apache-2.0",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "0BSD",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "CDLA-Permissive-2.0",          # webpki-roots (Mozilla CA bundle)
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+# All application crypto (control plane, JWT, passwords, SAML XML-DSig, TLS) is
+# on aws-lc-rs (FIPS module under `fips`).
+deny = [
+    { name = "argon2" },        # → crypto::password (PBKDF2)
+    { name = "jsonwebtoken" },  # → hand-rolled HS256 on crypto::mac
+    { name = "ring" },          # all TLS on rustls + aws-lc-rs
+    { name = "aes-gcm" },       # → crypto::aead
+    { name = "rsa" },           # → xmlsig-lc-rs RSA verify on aws-lc-rs
+    { name = "p256" },          # was bergshamra ECDSA + S3 sigv4a (dropped)
+    { name = "p384" },
+    { name = "p521" },
+    { name = "ed25519-dalek" },
+    { name = "dsa" },
+]

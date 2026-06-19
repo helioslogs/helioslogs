@@ -1,0 +1,63 @@
+[package]
+name = "helioslogs"
+version = "0.2.0"
+edition = "2021"
+description = "HeliosLogs is AI-native log search engine"
+license = "AGPL-3.0-only OR LicenseRef-Appbird-Commercial"
+repository = "https://github.com/helioslogs/helioslogs"
+authors = ["Appbird LLC <helioslogs@appbird.com>"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+aws-lc-rs = "1"
+base64 = "0.22"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "tls12", "logging"] }
+tokio-stream = "0.1"
+async-trait = "0.1"
+futures = "0.3"
+async-stream = "0.3"
+bytes = "1"
+uuid = { version = "1", features = ["v4"] }
+hostname = "0.4"
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "credentials-process", "sso"] }
+aws-credential-types = "1"
+aws-sdk-bedrockruntime = { version = "1", default-features = false, features = ["rt-tokio"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["http-1x", "rt-tokio"] }
+aws-smithy-types = "1"
+aws-smithy-runtime-api = "1"
+aws-smithy-http-client = { version = "1", default-features = false, features = ["rustls-aws-lc"] }
+rayon = "1"
+roaring = "0.10"
+zstd = "0.13"
+regex = "1"
+flate2 = "1"
+glob = "0.3"
+prost = "0.13"
+xmlsig-lc-rs = "0.1"
+roxmltree = "0.20"
+tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"] }
+tikv-jemalloc-ctl = { version = "0.6", features = ["stats"] }
+tikv-jemalloc-sys = "0.6"
+
+[features]
+# Build all crypto (including TLS) against the AWS-LC FIPS 140-3 module. Off by default.
+fips = ["aws-lc-rs/fips", "rustls/fips", "aws-smithy-http-client/rustls-aws-lc-fips", "xmlsig-lc-rs/fips"]
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+lto = "thin"
+opt-level = 3

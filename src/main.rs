@@ -1,0 +1,217 @@
+// Copyright 2026 Appbird LLC. Licensed under "GNU Affero General Public License v3.0"
+
+//! Block-engine log indexer + searcher + HTTP server (partitioned).
+//! Subcommands: `search`, `describe`, `serve`. Storage layout: see [`catalog`].
+
+use anyhow::Result;
+use chrono::Utc;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+// jemalloc everywhere, tuned to return freed memory to the OS proactively (short
+// decay) so compaction/search spikes don't ratchet RSS into the container cap.
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+// Linux supports the background purge thread; pair it with short decay.
+#[cfg(target_os = "linux")]
+#[allow(non_upper_case_globals)]
+#[export_name = "malloc_conf"]
+pub static malloc_conf: &[u8] = b"background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000\0";
+
+// macOS has no jemalloc background thread; keep the short decay (purges on
+// allocator activity) and drop background_thread, which would just be ignored.
+#[cfg(not(target_os = "linux"))]
+#[allow(non_upper_case_globals)]
+#[export_name = "malloc_conf"]
+pub static malloc_conf: &[u8] = b"dirty_decay_ms:1000,muzzy_decay_ms:1000\0";
+
+mod agent;
+mod auth;
+mod catalog;
+mod control;
+mod crypto;
+mod engine;
+mod http;
+mod indexer;
+mod llm;
+mod mcp;
+mod memstats;
+mod monitor;
+mod notify;
+mod outbound;
+mod retention;
+mod runtime_config;
+mod saml;
+mod sample_data;
+mod schema;
+mod search;
+mod self_logs;
+mod source;
+mod syslog;
+
+#[derive(Parser)]
+#[command(version, about = "Helios block-engine log indexer (partitioned)")]
+struct Cli {
+    /// Root directory for partitioned indexes.
+    #[arg(long, default_value = "./data", global = true)]
+    data_dir: PathBuf,
+
+    /// Verbose diagnostics (e.g. periodic jemalloc memory stats during `serve`).
+    #[arg(long, global = true)]
+    verbose: bool,
+
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Search across all partitions (or a specific index).
+    Search {
+        query: String,
+        #[arg(long)]
+        index: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
+    /// Describe the catalog: list all partitions with doc + segment counts.
+    Describe,
+    /// Start the HTTP server (MCP exposed at `POST /mcp`).
+    Serve {
+        #[arg(long, default_value_t = 7300)]
+        port: u16,
+        /// Bind address. Defaults to loopback; set `0.0.0.0` to listen on all interfaces (e.g. in Docker).
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// Shared store for blocks + manifests: an FS/NFS path or `s3://bucket/prefix`. Omit for single-node local-only.
+        #[arg(long)]
+        shared_store: Option<String>,
+        /// Built SPA dir (e.g. `frontend/dist`); mounted at `/` with an index.html fallback, after `/api` + `/mcp`.
+        #[arg(long)]
+        frontend_dir: Option<PathBuf>,
+        /// Override the syslog listener port from the control plane (UDP + TCP) — handy
+        /// for running several instances on one host. `0` disables the listener.
+        #[arg(long, env = "HELIOS_SYSLOG_PORT")]
+        syslog_port: Option<u16>,
+    },
+}
+
+fn main() -> Result<()> {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "info,hyper=warn".into());
+
+    // `SelfLogsLayer` no-ops until `serve` installs the sender. fmt writer is
+    // pinned to stderr: `mcp` uses stdout for the JSON-RPC wire.
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .compact()
+                .with_writer(std::io::stderr),
+        )
+        .with(self_logs::SelfLogsLayer)
+        .init();
+
+    let cli = Cli::parse();
+
+    // One-shot, idempotent storage upgrade: promote pre-env partitions into the
+    // env-aware layout (user→`default`, `_*` self-logs→`_system`) before catalog open.
+    std::fs::create_dir_all(&cli.data_dir).ok();
+    match catalog::migrate_to_env_layout(&cli.data_dir) {
+        Ok(moved) if !moved.is_empty() => {
+            for (index, env) in &moved {
+                tracing::info!(
+                    data_dir = %cli.data_dir.display(),
+                    %index,
+                    %env,
+                    "storage: migrated index into env-aware layout"
+                );
+            }
+        }
+        Ok(_) => {}
+        Err(e) => {
+            // Surface but don't abort — the user can re-run after fixing
+            // perms / dest collisions.
+            tracing::error!("storage: env-layout migration failed: {e}");
+        }
+    }
+
+    // One-shot legacy migration: move an old ./index/ dir into
+    // `data/default/default/<today>/` so previous demo data survives.
+    let legacy = PathBuf::from("./index");
+    let catalog_for_migration = catalog::Catalog::open(cli.data_dir.clone())?;
+    if let Some(moved) = catalog::migrate_legacy_index(&legacy, &catalog_for_migration, "default")?
+    {
+        // Emitted before `install_sender` runs, so this only lands in
+        // stderr (helioslogs.log) — _helioslogs doesn't exist yet either way.
+        tracing::info!(
+            data_dir = %cli.data_dir.display(),
+            env = %moved.env,
+            index = %moved.index,
+            day = %moved.day_string(),
+            "migrated legacy ./index/ into new partition layout"
+        );
+    }
+
+    match cli.cmd {
+        Cmd::Search {
+            query,
+            index,
+            limit,
+        } => {
+            let catalog = catalog::Catalog::open(cli.data_dir)?;
+            let fields = schema::build_schema();
+            search::cli_print_search(&catalog, &fields, &query, index.as_deref(), limit)
+        }
+        Cmd::Describe => {
+            let store = engine::block::BlockStore::new(&cli.data_dir);
+            let partitions = store.list_partitions()?;
+            println!("data dir: {}", cli.data_dir.display());
+            println!("today (UTC): {}", Utc::now().date_naive());
+            println!("partitions: {}", partitions.len());
+            for k in &partitions {
+                let blocks = store.open_blocks(k)?;
+                let docs: u64 = blocks.iter().map(|b| b.row_count() as u64).sum();
+                println!(
+                    "  {}/{}/{}  docs={:>6}  blocks={}",
+                    k.env,
+                    k.index,
+                    k.day_string(),
+                    docs,
+                    blocks.len()
+                );
+            }
+            Ok(())
+        }
+        Cmd::Serve {
+            port,
+            host,
+            shared_store,
+            frontend_dir,
+            syslog_port,
+        } => {
+            if let Some(dir) = &frontend_dir {
+                if !dir.join("index.html").is_file() {
+                    anyhow::bail!(
+                        "--frontend-dir {} does not contain index.html",
+                        dir.display()
+                    );
+                }
+            }
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(http::serve(
+                cli.data_dir,
+                host,
+                port,
+                frontend_dir,
+                shared_store,
+                cli.verbose,
+                syslog_port,
+            ))
+        }
+    }
+}

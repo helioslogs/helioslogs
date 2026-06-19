@@ -1,0 +1,403 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Theme palettes. Tailwind's `stone` (surfaces/text) and `orange` (accent)
+   scales resolve to these RGB-triplet variables (see tailwind.config.js), so
+   the active theme switches at runtime via `data-theme` on <html> plus the
+   existing `.dark` class. The bare `:root` blocks are the default theme
+   (slate — cool grays + blue accent, no override block needed); each named
+   theme overrides the full set for light and dark.
+   Generated values — keep each block complete (all 22 vars) so specificity
+   fallthrough between blocks can't mix palettes. */
+
+:root {
+    --hl-stone-50: 246 248 250;
+    --hl-stone-100: 234 238 242;
+    --hl-stone-200: 208 215 222;
+    --hl-stone-300: 175 184 193;
+    --hl-stone-400: 140 149 159;
+    --hl-stone-500: 110 119 129;
+    --hl-stone-600: 87 96 106;
+    --hl-stone-700: 48 54 61;
+    --hl-stone-800: 33 38 45;
+    --hl-stone-900: 22 27 34;
+    --hl-stone-950: 13 17 23;
+    --hl-accent-50: 221 244 255;
+    --hl-accent-100: 182 227 255;
+    --hl-accent-200: 165 214 255;
+    --hl-accent-300: 121 192 255;
+    --hl-accent-400: 88 166 255;
+    --hl-accent-500: 47 129 247;
+    --hl-accent-600: 9 105 218;
+    --hl-accent-700: 5 80 174;
+    --hl-accent-800: 10 48 105;
+    --hl-accent-900: 13 65 157;
+    --hl-accent-950: 19 35 58;
+}
+:root.dark {
+    --hl-stone-50: 246 248 250;
+    --hl-stone-100: 234 238 242;
+    --hl-stone-200: 208 215 222;
+    --hl-stone-300: 230 237 243;
+    --hl-stone-400: 139 148 158;
+    --hl-stone-500: 110 118 129;
+    --hl-stone-600: 87 96 106;
+    --hl-stone-700: 48 54 61;
+    --hl-stone-800: 33 38 45;
+    --hl-stone-900: 22 27 34;
+    --hl-stone-950: 13 17 23;
+    --hl-accent-50: 221 244 255;
+    --hl-accent-100: 182 227 255;
+    --hl-accent-200: 165 214 255;
+    --hl-accent-300: 121 192 255;
+    --hl-accent-400: 88 166 255;
+    --hl-accent-500: 47 129 247;
+    --hl-accent-600: 9 105 218;
+    --hl-accent-700: 5 80 174;
+    --hl-accent-800: 10 48 105;
+    --hl-accent-900: 13 65 157;
+    --hl-accent-950: 19 35 58;
+}
+:root[data-theme="helios"] {
+    --hl-stone-50: 250 250 249;
+    --hl-stone-100: 245 245 244;
+    --hl-stone-200: 231 229 228;
+    --hl-stone-300: 214 211 209;
+    --hl-stone-400: 168 162 158;
+    --hl-stone-500: 120 113 108;
+    --hl-stone-600: 87 83 78;
+    --hl-stone-700: 42 42 42;
+    --hl-stone-800: 26 26 26;
+    --hl-stone-900: 20 20 20;
+    --hl-stone-950: 13 13 13;
+    --hl-accent-50: 255 247 237;
+    --hl-accent-100: 255 237 213;
+    --hl-accent-200: 254 215 170;
+    --hl-accent-300: 253 186 116;
+    --hl-accent-400: 251 146 60;
+    --hl-accent-500: 249 115 22;
+    --hl-accent-600: 234 88 12;
+    --hl-accent-700: 194 65 12;
+    --hl-accent-800: 154 52 18;
+    --hl-accent-900: 124 45 18;
+    --hl-accent-950: 67 20 7;
+}
+:root.dark[data-theme="helios"] {
+    --hl-stone-50: 250 250 249;
+    --hl-stone-100: 245 245 244;
+    --hl-stone-200: 231 229 228;
+    --hl-stone-300: 237 237 242;
+    --hl-stone-400: 200 200 208;
+    --hl-stone-500: 160 160 168;
+    --hl-stone-600: 87 83 78;
+    --hl-stone-700: 42 42 42;
+    --hl-stone-800: 26 26 26;
+    --hl-stone-900: 20 20 20;
+    --hl-stone-950: 13 13 13;
+    --hl-accent-50: 255 247 237;
+    --hl-accent-100: 255 237 213;
+    --hl-accent-200: 254 215 170;
+    --hl-accent-300: 253 186 116;
+    --hl-accent-400: 251 146 60;
+    --hl-accent-500: 249 115 22;
+    --hl-accent-600: 234 88 12;
+    --hl-accent-700: 194 65 12;
+    --hl-accent-800: 154 52 18;
+    --hl-accent-900: 124 45 18;
+    --hl-accent-950: 67 20 7;
+}
+:root[data-theme="emerald"] {
+    --hl-stone-50: 250 250 250;
+    --hl-stone-100: 244 244 245;
+    --hl-stone-200: 228 228 231;
+    --hl-stone-300: 212 212 216;
+    --hl-stone-400: 161 161 170;
+    --hl-stone-500: 113 113 122;
+    --hl-stone-600: 82 82 91;
+    --hl-stone-700: 44 44 49;
+    --hl-stone-800: 29 29 33;
+    --hl-stone-900: 19 19 22;
+    --hl-stone-950: 11 11 13;
+    --hl-accent-50: 236 253 245;
+    --hl-accent-100: 209 250 229;
+    --hl-accent-200: 167 243 208;
+    --hl-accent-300: 110 231 183;
+    --hl-accent-400: 52 211 153;
+    --hl-accent-500: 16 185 129;
+    --hl-accent-600: 5 150 105;
+    --hl-accent-700: 4 120 87;
+    --hl-accent-800: 6 95 70;
+    --hl-accent-900: 13 81 59;
+    --hl-accent-950: 12 37 30;
+}
+:root.dark[data-theme="emerald"] {
+    --hl-stone-50: 250 250 250;
+    --hl-stone-100: 244 244 245;
+    --hl-stone-200: 228 228 231;
+    --hl-stone-300: 236 236 238;
+    --hl-stone-400: 176 176 184;
+    --hl-stone-500: 139 139 148;
+    --hl-stone-600: 82 82 91;
+    --hl-stone-700: 44 44 49;
+    --hl-stone-800: 29 29 33;
+    --hl-stone-900: 19 19 22;
+    --hl-stone-950: 11 11 13;
+    --hl-accent-50: 236 253 245;
+    --hl-accent-100: 209 250 229;
+    --hl-accent-200: 167 243 208;
+    --hl-accent-300: 110 231 183;
+    --hl-accent-400: 52 211 153;
+    --hl-accent-500: 16 185 129;
+    --hl-accent-600: 5 150 105;
+    --hl-accent-700: 4 120 87;
+    --hl-accent-800: 6 95 70;
+    --hl-accent-900: 13 81 59;
+    --hl-accent-950: 12 37 30;
+}
+:root[data-theme="indigo"] {
+    --hl-stone-50: 248 250 252;
+    --hl-stone-100: 241 245 249;
+    --hl-stone-200: 226 232 240;
+    --hl-stone-300: 203 213 225;
+    --hl-stone-400: 148 163 184;
+    --hl-stone-500: 100 116 139;
+    --hl-stone-600: 71 85 105;
+    --hl-stone-700: 51 65 85;
+    --hl-stone-800: 30 41 59;
+    --hl-stone-900: 15 23 42;
+    --hl-stone-950: 8 13 26;
+    --hl-accent-50: 238 242 255;
+    --hl-accent-100: 224 231 255;
+    --hl-accent-200: 199 210 254;
+    --hl-accent-300: 165 180 252;
+    --hl-accent-400: 129 140 248;
+    --hl-accent-500: 99 102 241;
+    --hl-accent-600: 79 70 229;
+    --hl-accent-700: 67 56 202;
+    --hl-accent-800: 55 48 163;
+    --hl-accent-900: 45 49 112;
+    --hl-accent-950: 22 26 58;
+}
+:root.dark[data-theme="indigo"] {
+    --hl-stone-50: 248 250 252;
+    --hl-stone-100: 241 245 249;
+    --hl-stone-200: 226 232 240;
+    --hl-stone-300: 230 235 244;
+    --hl-stone-400: 159 176 199;
+    --hl-stone-500: 116 136 163;
+    --hl-stone-600: 71 85 105;
+    --hl-stone-700: 51 65 85;
+    --hl-stone-800: 30 41 59;
+    --hl-stone-900: 15 23 42;
+    --hl-stone-950: 8 13 26;
+    --hl-accent-50: 238 242 255;
+    --hl-accent-100: 224 231 255;
+    --hl-accent-200: 199 210 254;
+    --hl-accent-300: 165 180 252;
+    --hl-accent-400: 129 140 248;
+    --hl-accent-500: 99 102 241;
+    --hl-accent-600: 79 70 229;
+    --hl-accent-700: 67 56 202;
+    --hl-accent-800: 55 48 163;
+    --hl-accent-900: 45 49 112;
+    --hl-accent-950: 22 26 58;
+}
+:root[data-theme="dracula"] {
+    --hl-stone-50: 252 252 252;
+    --hl-stone-100: 245 245 245;
+    --hl-stone-200: 229 229 229;
+    --hl-stone-300: 212 212 212;
+    --hl-stone-400: 163 163 163;
+    --hl-stone-500: 115 115 115;
+    --hl-stone-600: 82 82 82;
+    --hl-stone-700: 46 46 46;
+    --hl-stone-800: 22 22 22;
+    --hl-stone-900: 10 10 10;
+    --hl-stone-950: 0 0 0;
+    --hl-accent-50: 247 242 255;
+    --hl-accent-100: 237 225 254;
+    --hl-accent-200: 222 202 252;
+    --hl-accent-300: 205 173 250;
+    --hl-accent-400: 189 147 249;
+    --hl-accent-500: 167 116 241;
+    --hl-accent-600: 137 87 227;
+    --hl-accent-700: 113 65 198;
+    --hl-accent-800: 88 51 156;
+    --hl-accent-900: 84 57 140;
+    --hl-accent-950: 50 43 77;
+}
+:root.dark[data-theme="dracula"] {
+    --hl-stone-50: 252 252 252;
+    --hl-stone-100: 245 245 245;
+    --hl-stone-200: 229 229 229;
+    --hl-stone-300: 255 255 255;
+    --hl-stone-400: 212 212 212;
+    --hl-stone-500: 163 163 163;
+    --hl-stone-600: 82 82 82;
+    --hl-stone-700: 46 46 46;
+    --hl-stone-800: 22 22 22;
+    --hl-stone-900: 10 10 10;
+    --hl-stone-950: 0 0 0;
+    --hl-accent-50: 247 242 255;
+    --hl-accent-100: 237 225 254;
+    --hl-accent-200: 222 202 252;
+    --hl-accent-300: 205 173 250;
+    --hl-accent-400: 189 147 249;
+    --hl-accent-500: 167 116 241;
+    --hl-accent-600: 137 87 227;
+    --hl-accent-700: 113 65 198;
+    --hl-accent-800: 88 51 156;
+    --hl-accent-900: 84 57 140;
+    --hl-accent-950: 50 43 77;
+}
+:root[data-theme="homebrew"] {
+    --hl-stone-50: 247 252 247;
+    --hl-stone-100: 238 248 238;
+    --hl-stone-200: 217 236 217;
+    --hl-stone-300: 168 200 168;
+    --hl-stone-400: 118 160 120;
+    --hl-stone-500: 80 122 84;
+    --hl-stone-600: 56 92 58;
+    --hl-stone-700: 28 58 26;
+    --hl-stone-800: 12 22 12;
+    --hl-stone-900: 5 10 5;
+    --hl-stone-950: 0 0 0;
+    --hl-accent-50: 237 253 231;
+    --hl-accent-100: 216 251 204;
+    --hl-accent-200: 178 245 158;
+    --hl-accent-300: 127 237 98;
+    --hl-accent-400: 74 226 40;
+    --hl-accent-500: 47 201 22;
+    --hl-accent-600: 31 144 15;
+    --hl-accent-700: 25 122 11;
+    --hl-accent-800: 21 95 10;
+    --hl-accent-900: 21 85 11;
+    --hl-accent-950: 10 37 6;
+}
+/* Dark Homebrew = the classic Terminal profile: pure black surfaces and the
+   whole text ramp as brightness levels of phosphor green (#28fe14 primary).
+   Mid tiers (400-600) run hot on purpose — most of the UI renders in them,
+   and the terminal look depends on that text staying vivid. */
+:root.dark[data-theme="homebrew"] {
+    --hl-stone-50: 247 252 247;
+    --hl-stone-100: 200 255 190;
+    --hl-stone-200: 140 255 120;
+    --hl-stone-300: 40 254 20;
+    --hl-stone-400: 36 226 18;
+    --hl-stone-500: 29 180 13;
+    --hl-stone-600: 22 130 10;
+    --hl-stone-700: 32 78 24;
+    --hl-stone-800: 14 26 14;
+    --hl-stone-900: 6 12 6;
+    --hl-stone-950: 0 0 0;
+    --hl-accent-50: 237 253 231;
+    --hl-accent-100: 216 251 204;
+    --hl-accent-200: 178 245 158;
+    --hl-accent-300: 127 237 98;
+    --hl-accent-400: 65 240 30;
+    --hl-accent-500: 48 215 20;
+    --hl-accent-600: 31 144 15;
+    --hl-accent-700: 25 122 11;
+    --hl-accent-800: 21 95 10;
+    --hl-accent-900: 24 96 14;
+    --hl-accent-950: 8 30 5;
+}
+
+@layer base {
+    html,
+    body,
+    #root {
+        @apply h-full;
+    }
+    body {
+        @apply font-sans text-base bg-stone-50 text-stone-900 antialiased;
+    }
+    .dark body {
+        @apply bg-stone-950 text-stone-100;
+    }
+}
+
+@layer components {
+    /* Severity badge colors used by both ResultsList rows and FieldPanel keys. */
+    .sev-debug {
+        @apply text-stone-500 dark:text-stone-400;
+    }
+    .sev-info {
+        @apply text-sky-700  dark:text-sky-300;
+    }
+    .sev-warn {
+        @apply text-amber-700 dark:text-amber-300;
+    }
+    .sev-error {
+        @apply text-red-700  dark:text-red-300;
+    }
+    .sev-fatal {
+        @apply text-red-800 font-semibold dark:text-red-200;
+    }
+
+    .sev-badge-debug {
+        @apply bg-stone-100 text-stone-700 ring-stone-200 dark:bg-stone-800 dark:text-stone-300 dark:ring-stone-700;
+    }
+    .sev-badge-info {
+        @apply bg-sky-50 text-sky-800 ring-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:ring-sky-800;
+    }
+    .sev-badge-warn {
+        @apply bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-800;
+    }
+    .sev-badge-error {
+        @apply bg-red-50 text-red-800 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-800;
+    }
+    .sev-badge-fatal {
+        @apply bg-red-100 text-red-900 ring-red-300 dark:bg-red-900 dark:text-red-100 dark:ring-red-700;
+    }
+}
+
+/* Recharts: tick/grid colors via the palette vars so both dark mode and the
+   active theme flip together. recharts emits inline SVG; we override only the
+   colors we need. */
+.recharts-cartesian-grid line {
+    stroke: rgb(var(--hl-stone-200));
+}
+.dark .recharts-cartesian-grid line {
+    stroke: rgb(var(--hl-stone-800));
+}
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line {
+    stroke: rgb(var(--hl-stone-300));
+}
+.dark .recharts-cartesian-axis-line,
+.dark .recharts-cartesian-axis-tick-line {
+    stroke: rgb(var(--hl-stone-700));
+}
+/* Histogram axis labels (time on x-axis, counts on y-axis). Black-ish in
+   light mode for readability; mid-grey in dark mode so they don't compete
+   with the chart bars. */
+.recharts-text {
+    fill: rgb(var(--hl-stone-900));
+}
+.dark .recharts-text {
+    fill: rgb(var(--hl-stone-400));
+}
+
+/* react-grid-layout: drop shadow on the dragging item + theme the drop
+   placeholder and resize handle. Base layout/transform styles come from the
+   library's own stylesheets (imported in DashboardViewPage). */
+.react-grid-item.react-grid-placeholder {
+    background: rgb(var(--hl-accent-400));
+    opacity: 0.2;
+    border-radius: 0.75rem;
+}
+.react-grid-item.react-draggable-dragging {
+    z-index: 30;
+    cursor: grabbing;
+}
+.react-grid-item > .react-resizable-handle::after {
+    border-right-color: rgb(var(--hl-stone-400));
+    border-bottom-color: rgb(var(--hl-stone-400));
+}
+.dark .react-grid-item > .react-resizable-handle::after {
+    border-right-color: rgb(var(--hl-stone-500));
+    border-bottom-color: rgb(var(--hl-stone-500));
+}

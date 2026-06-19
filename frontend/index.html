@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <!-- ?v= busts the per-origin favicon cache (port 5173 is shared by many
+             Vite apps, so browsers may show a stale icon). Bump on icon changes. -->
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2" />
+        <title>HeliosLogs</title>
+        <script>
+            // Pre-paint theme bootstrap: mirror state/theme.tsx so the first
+            // frame matches the user's cached preference (no flash). The React
+            // provider re-applies (and layers in account + instance defaults).
+            (function () {
+                try {
+                    var t = localStorage.getItem("helios-theme");
+                    var p = localStorage.getItem("helios-palette");
+                    var root = document.documentElement;
+                    if (t !== "light") root.classList.add("dark");
+                    if (p === "github") p = "slate"; // pre-rename id
+                    root.dataset.theme =
+                        ["helios", "slate", "emerald", "indigo", "homebrew", "dracula"].indexOf(
+                            p,
+                        ) >= 0
+                            ? p
+                            : "slate";
+                } catch (e) {}
+            })();
+        </script>
+    </head>
+    <body>
+        <div id="root"></div>
+        <script type="module" src="/src/main.tsx"></script>
+    </body>
+</html>
