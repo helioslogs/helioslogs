@@ -2,6 +2,9 @@
 name = "helioslogs"
 version = "0.2.0"
 edition = "2021"
+# Floor imposed by the aws-sdk/smithy crates (they require rustc 1.91.1). Toolchains
+# older than this fail fast with a clear message instead of per-crate errors.
+rust-version = "1.91.1"
 description = "HeliosLogs is a fast, easy, modern log search engine with analytics & AI"
 license = "AGPL-3.0-only OR LicenseRef-Appbird-Commercial"
 repository = "https://github.com/helioslogs/helioslogs"
