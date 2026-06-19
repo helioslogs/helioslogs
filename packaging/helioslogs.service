@@ -1,0 +1,30 @@
+[Unit]
+Description=HeliosLogs log search engine
+Documentation=https://github.com/helioslogs/helioslogs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# Ephemeral system user + /var/lib/helioslogs created/owned by systemd at runtime.
+DynamicUser=yes
+StateDirectory=helioslogs
+# First-run admin bootstrap + LLM keys etc. (optional; see helioslogs.env.example).
+EnvironmentFile=-/etc/helioslogs/helioslogs.env
+Environment=HELIOS_CONTROL_KEY_PATH=/var/lib/helioslogs/secret-control.json
+Environment=HELIOS_JWT_SECRET_PATH=/var/lib/helioslogs/secret-jwt.json
+ExecStart=/usr/bin/helioslogs serve --host 0.0.0.0 --port 7300 --data-dir /var/lib/helioslogs
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

@@ -22,23 +22,19 @@ docker pull helioslogs/helioslogs:latest
 docker run -p 7300:7300 \
   -v helios-data:/app/data \
   -v helios-secret:/app/secret \
-  -e HELIOS_ADMIN_EMAIL=you@example.com \
-  -e HELIOS_ADMIN_PASSWORD=changeme \
   helioslogs/helioslogs:latest
-#  open http://localhost:7300 and log in with the admin email/password above
+
+#  listening on http://localhost:7300
 ```
 
 ## Build from source
 
 ```bash
-# rebuild frontend
-cd frontend && npm install && npm run build && cd ..
-
-# rebuild backend
+# build (embeds the committed frontend/dist into the binary)
 cargo build --release
 
-# start backend with frontend
-./target/release/helioslogs --data-dir ./data serve --port 7300 --frontend-dir ./frontend/dist
+# start — the UI is served from the embedded bundle
+./target/release/helioslogs --data-dir ./data serve --port 7300
 #  listening on http://127.0.0.1:7300
 ```
 
