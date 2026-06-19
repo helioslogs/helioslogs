@@ -2,7 +2,7 @@
 name = "helioslogs"
 version = "0.2.0"
 edition = "2021"
-description = "HeliosLogs is AI-native log search engine"
+description = "HeliosLogs is a fast, easy, modern log search engine with analytics & AI"
 license = "AGPL-3.0-only OR LicenseRef-Appbird-Commercial"
 repository = "https://github.com/helioslogs/helioslogs"
 authors = ["Appbird LLC <helioslogs@appbird.com>"]
@@ -46,6 +46,9 @@ glob = "0.3"
 prost = "0.13"
 xmlsig-lc-rs = "0.1"
 roxmltree = "0.20"
+# Embeds the committed frontend/dist into the binary at compile time (release
+# builds). Run with --frontend-dir to serve from disk instead.
+rust-embed = { version = "8", features = ["mime-guess"] }
 tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"] }
 tikv-jemalloc-ctl = { version = "0.6", features = ["stats"] }
 tikv-jemalloc-sys = "0.6"
@@ -53,6 +56,22 @@ tikv-jemalloc-sys = "0.6"
 [features]
 # Build all crypto (including TLS) against the AWS-LC FIPS 140-3 module. Off by default.
 fips = ["aws-lc-rs/fips", "rustls/fips", "aws-smithy-http-client/rustls-aws-lc-fips", "xmlsig-lc-rs/fips"]
+
+# Debian packaging (`cargo deb`). Ships a single self-contained binary + systemd unit.
+[package.metadata.deb]
+maintainer = "Appbird LLC <helioslogs@appbird.com>"
+copyright = "2026, Appbird LLC"
+license-file = ["LICENSE.md", "0"]
+extended-description = "HeliosLogs is a fast, light weight log search tool with a custom columnar block storage engine, a built-in AI agent and MCP server"
+section = "utils"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/helioslogs", "usr/bin/", "755"],
+    ["packaging/helioslogs.service", "lib/systemd/system/helioslogs.service", "644"],
+    ["packaging/helioslogs.env.example", "usr/share/helioslogs/helioslogs.env.example", "644"],
+    ["README.md", "usr/share/doc/helioslogs/README.md", "644"],
+]
 
 [dev-dependencies]
 tempfile = "3"

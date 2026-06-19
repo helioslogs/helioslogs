@@ -4,24 +4,24 @@ Copyright (C) 2026 Appbird LLC. All rights reserved.
 
 SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Appbird-Commercial
 
-Helios is dual licensed. You may use it under EITHER of the following, at your
+HeliosLogs is dual licensed. You may use it under EITHER of the following, at your
 option:
 
   1. The GNU Affero General Public License, version 3 ("AGPL"), reproduced in
      full below. This is the default license and applies unless you have a
      separate written agreement with Appbird LLC. Use under the AGPL carries
      the AGPL's obligations, including its network-use source-disclosure
-     requirement (section 13): if you run a modified version of Helios to
+     requirement (section 13): if you run a modified version of HeliosLogs to
      provide a service over a network, you must make the complete corresponding
      source of your modified version available to the users of that service.
 
   2. A commercial license from Appbird LLC, which removes the AGPL's copyleft
-     obligations and may include support, indemnification, and additional
+     obligations and may include support and additional
      terms. The commercial license is required for any use you cannot or do not
      wish to perform under the AGPL. To obtain one, contact Appbird LLC at
      helioslogs@appbird.com.
 
-If you redistribute Helios or a work based on it under the AGPL, keep this
+If you redistribute HeliosLogs or a work based on it under the AGPL, keep this
 notice and the full license text below intact. The commercial license, where
 granted, supersedes the AGPL for the licensed party only and is governed solely
 by its own written terms.

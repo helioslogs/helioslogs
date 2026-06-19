@@ -24,6 +24,7 @@ mod agent;
 mod api_keys;
 mod auth;
 mod dashboards;
+mod embedded;
 mod envs;
 mod ingest;
 mod ingest_tokens;
@@ -606,7 +607,8 @@ pub(crate) fn build_router(state: AppState, frontend_dir: Option<PathBuf>) -> Ro
             .route_service("/favicon.svg", ServeFile::new(dir.join("favicon.svg")))
             .fallback(spa_index)
     } else {
-        app
+        // No on-disk SPA dir: serve the frontend/dist bundle embedded at compile time.
+        app.fallback(|uri: axum::http::Uri| async move { embedded::serve(uri.path()) })
     };
 
     app.layer(cors)
