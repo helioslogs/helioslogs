@@ -194,10 +194,10 @@ pub fn filter_partitions(
     let lo_date = start.map(|t| t.date_naive());
     let hi_date = end.map(|t| t.date_naive());
     all.retain(|k| {
-        env.map_or(true, |e| k.env == e)
+        env.is_none_or(|e| k.env == e)
             && index_matches(index_patterns, &k.index)
-            && lo_date.map_or(true, |lo| k.day >= lo)
-            && hi_date.map_or(true, |hi| k.day <= hi)
+            && lo_date.is_none_or(|lo| k.day >= lo)
+            && hi_date.is_none_or(|hi| k.day <= hi)
     });
     all.sort_by(|a, b| {
         a.env

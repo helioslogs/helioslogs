@@ -68,6 +68,7 @@ pub struct AnyValue {
 
 pub mod any_value {
     #[derive(Clone, PartialEq, prost::Oneof)]
+    #[allow(clippy::enum_variant_names)] // variant names mirror the OTLP AnyValue oneof
     pub enum Value {
         #[prost(string, tag = "1")]
         StringValue(String),

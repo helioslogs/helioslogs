@@ -394,7 +394,7 @@ pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Valu
     let name = name.to_string();
     let args = args.clone();
     let catalog = ctx.catalog.clone();
-    let fields = ctx.fields.clone();
+    let fields = ctx.fields;
     let ctx_env = ctx.env.clone();
     task::spawn_blocking(move || run_blocking(&catalog, &fields, &ctx_env, &name, &args))
         .await

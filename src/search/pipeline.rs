@@ -466,6 +466,7 @@ fn parse_sort(s: &str) -> Result<Stage> {
 
 // ============================ Executor ======================================
 
+#[allow(clippy::too_many_arguments)]
 pub fn execute(
     catalog: &Catalog,
     fields: &Fields,
@@ -646,13 +647,13 @@ fn stage_to_display(s: &Stage) -> String {
 }
 
 fn display_interval(ms: u64) -> String {
-    if ms % 86_400_000 == 0 {
+    if ms.is_multiple_of(86_400_000) {
         format!("{}d", ms / 86_400_000)
-    } else if ms % 3_600_000 == 0 {
+    } else if ms.is_multiple_of(3_600_000) {
         format!("{}h", ms / 3_600_000)
-    } else if ms % 60_000 == 0 {
+    } else if ms.is_multiple_of(60_000) {
         format!("{}m", ms / 60_000)
-    } else if ms % 1_000 == 0 {
+    } else if ms.is_multiple_of(1_000) {
         format!("{}s", ms / 1_000)
     } else {
         format!("{ms}ms")
@@ -677,6 +678,7 @@ fn default_span_ms(start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>) -> 
         .unwrap_or(&86_400_000)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_stats(
     catalog: &Catalog,
     fields: &Fields,
@@ -884,7 +886,7 @@ fn ts_ms_to_value(ms: i64) -> TableValue {
 /// Fixed-width RFC3339 UTC bucket label; millis only for sub-second spans.
 fn format_bucket(ms: i64, span_ms: u64) -> String {
     let d = DateTime::<Utc>::from_timestamp_millis(ms).unwrap_or_default();
-    if span_ms % 1_000 == 0 {
+    if span_ms.is_multiple_of(1_000) {
         d.format("%Y-%m-%dT%H:%M:%SZ").to_string()
     } else {
         d.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
@@ -1458,7 +1460,7 @@ mod tests {
 
     #[test]
     fn round4_rounds_to_four_places() {
-        assert_eq!(round4(3.14159), 3.1416);
+        assert_eq!(round4(1.23459), 1.2346);
         assert_eq!(round4(2.0 / 3.0), 0.6667);
         assert_eq!(round4(0.001), 0.001);
     }

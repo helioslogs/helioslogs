@@ -324,7 +324,7 @@ impl BlockStore {
                 Some((g, k))
             })
             .collect();
-        gens.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+        gens.sort_by_key(|b| std::cmp::Reverse(b.0)); // newest first
         for (_, k) in gens.into_iter().skip(KEEP_GENERATIONS) {
             let _ = self.store.delete(&k);
         }

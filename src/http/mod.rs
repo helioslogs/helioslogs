@@ -282,7 +282,7 @@ pub async fn serve(
     // alerts land via the `raise_alert` tool.
     tokio::spawn(crate::monitor::run_scheduler(
         state.catalog.clone(),
-        state.fields.clone(),
+        state.fields,
         state.control.clone(),
     ));
 

@@ -70,7 +70,7 @@ async fn tick(catalog: &Catalog, fields: &Fields, control: &Control) -> Result<(
         }
 
         let cat = catalog.clone();
-        let fld = fields.clone();
+        let fld = *fields;
         let ctl = control.clone();
         let owner = owner_user_id.clone();
         let mid = m.id.clone();
@@ -141,7 +141,7 @@ async fn run_threshold_monitor(
     // worker, mirroring how the agent tools offload via spawn_blocking.
     let (cat, fld, q, env, index) = (
         catalog.clone(),
-        fields.clone(),
+        *fields,
         cfg.query.clone(),
         m.env.clone(),
         cfg.index.clone(),
@@ -271,7 +271,7 @@ pub async fn run_ai_monitor_into(
 
     let engine = AgentEngine {
         catalog: catalog.clone(),
-        fields: fields.clone(),
+        fields: *fields,
         control: control.clone(),
     };
     let mode = ToolMode::MonitorRun {

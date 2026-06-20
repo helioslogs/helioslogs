@@ -53,6 +53,7 @@ pub trait PartitionEngine: Send + Sync {
 
     /// Combined [`search`](Self::search) + [`histogram`](Self::histogram) in one
     /// block pass (filter evaluated once). Buckets hold only non-empty buckets.
+    #[allow(clippy::type_complexity)]
     fn search_histogram(
         &self,
         key: &PartitionKey,

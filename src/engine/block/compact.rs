@@ -125,7 +125,7 @@ pub fn compact_partition(
         // Write the merged block, then guarded-swap it for the group. If another
         // compactor already merged these, the swap aborts and we drop the orphan.
         let new_id = store.write_block(key, &w.finish()?)?;
-        if store.swap_blocks_if_present(key, &group, &[new_id.clone()])? {
+        if store.swap_blocks_if_present(key, &group, std::slice::from_ref(&new_id))? {
             for id in &group {
                 store.delete_block(key, id);
             }

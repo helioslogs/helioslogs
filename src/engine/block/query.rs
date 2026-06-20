@@ -110,6 +110,7 @@ pub fn search(
 
 /// One pass yielding both time-DESC top-`limit` hits and histogram buckets from the
 /// same matched set (~half the work of separate calls). `interval_ms <= 0` skips bucketing.
+#[allow(clippy::type_complexity)]
 pub fn search_histogram(
     store: &BlockStore,
     key: &PartitionKey,
@@ -369,6 +370,7 @@ pub fn histogram(
 
 /// Per-field terms aggregation over matched rows, raw (unscaled) counts. `source`
 /// and string paths group on the original-case value; numeric paths on the value column.
+#[allow(clippy::too_many_arguments)]
 pub fn terms(
     store: &BlockStore,
     key: &PartitionKey,

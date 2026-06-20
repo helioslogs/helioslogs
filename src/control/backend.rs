@@ -2477,7 +2477,7 @@ impl Control {
             .filter(|c| c.kind == "chat")
             .map(|c| (c.updated_at, c.meta()))
             .collect();
-        metas.sort_by(|a, b| b.0.cmp(&a.0));
+        metas.sort_by_key(|b| std::cmp::Reverse(b.0));
         Ok(metas.into_iter().map(|(_, m)| m).collect())
     }
 
@@ -2636,7 +2636,7 @@ impl Control {
             .into_iter()
             .filter(|st| st.visible_to(user_id))
             .filter(|st| !only_unacked || !st.alert.acknowledged)
-            .filter(|st| monitor.map_or(true, |m| st.alert.monitor_id == m))
+            .filter(|st| monitor.is_none_or(|m| st.alert.monitor_id == m))
             .filter(|st| match &needle {
                 None => true,
                 Some(n) => {
@@ -2649,7 +2649,7 @@ impl Control {
             })
             .map(|st| st.project(user_id))
             .collect();
-        items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        items.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         items.truncate(limit);
         Ok(items)
     }
@@ -2678,7 +2678,7 @@ impl Control {
             .filter(|st| st.alert.monitor_id == monitor_id && st.visible_to(user_id))
             .map(|st| st.project(user_id))
             .collect();
-        items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        items.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         items.truncate(200);
         Ok(items)
     }

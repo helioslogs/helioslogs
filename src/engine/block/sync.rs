@@ -300,7 +300,7 @@ mod tests {
         // Shared-side compaction merges A,B → M and removes the originals.
         let m = shared.write_block(&k, &blk(3, "m")).unwrap();
         shared
-            .swap_blocks_if_present(&k, &[a.clone(), b.clone()], &[m.clone()])
+            .swap_blocks_if_present(&k, &[a.clone(), b.clone()], std::slice::from_ref(&m))
             .unwrap();
 
         upload_partition(&local, &shared, &k, &pend).unwrap();
@@ -355,7 +355,7 @@ mod tests {
         // Shared-side compaction merges a,b → m.
         let m = shared.write_block(&k, &blk(3, "m")).unwrap();
         shared
-            .swap_blocks_if_present(&k, &[a.clone(), b.clone()], &[m.clone()])
+            .swap_blocks_if_present(&k, &[a.clone(), b.clone()], std::slice::from_ref(&m))
             .unwrap();
 
         pull_partition(&local, &shared, &k, &pend).unwrap();

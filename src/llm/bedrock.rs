@@ -151,29 +151,26 @@ impl LlmProvider for BedrockProvider {
                     StreamItem::MessageStart(_) => {}
                     StreamItem::ContentBlockStart(ev) => {
                         let block_idx = ev.content_block_index();
-                        if let Some(start) = ev.start() {
-                            if let ContentBlockStart::ToolUse(tool) = start {
-                                let our_idx = next_tool_index;
-                                next_tool_index += 1;
-                                block_to_tool.insert(block_idx, our_idx);
-                                yield Ok(LlmEvent::ToolCallDelta {
-                                    index: our_idx,
-                                    id: Some(tool.tool_use_id().to_string()),
-                                    name: Some(tool.name().to_string()),
-                                    arguments_delta: None,
-                                });
-                            }
+                        if let Some(ContentBlockStart::ToolUse(tool)) = ev.start() {
+                            let our_idx = next_tool_index;
+                            next_tool_index += 1;
+                            block_to_tool.insert(block_idx, our_idx);
+                            yield Ok(LlmEvent::ToolCallDelta {
+                                index: our_idx,
+                                id: Some(tool.tool_use_id().to_string()),
+                                name: Some(tool.name().to_string()),
+                                arguments_delta: None,
+                            });
                         }
                     }
                     StreamItem::ContentBlockDelta(ev) => {
                         let block_idx = ev.content_block_index();
                         if let Some(delta) = ev.delta() {
                             match delta {
-                                ContentBlockDelta::Text(text) => {
-                                    if !text.is_empty() {
+                                ContentBlockDelta::Text(text)
+                                    if !text.is_empty() => {
                                         yield Ok(LlmEvent::Content(text.clone()));
                                     }
-                                }
                                 ContentBlockDelta::ToolUse(tu) => {
                                     if let Some(&tool_idx) = block_to_tool.get(&block_idx) {
                                         yield Ok(LlmEvent::ToolCallDelta {
@@ -184,12 +181,10 @@ impl LlmProvider for BedrockProvider {
                                         });
                                     }
                                 }
-                                ContentBlockDelta::ReasoningContent(r) => {
-                                    if let ReasoningContentBlockDelta::Text(text) = r {
-                                        if !text.is_empty() {
-                                            yield Ok(LlmEvent::Reasoning(text.clone()));
-                                        }
-                                    }
+                                ContentBlockDelta::ReasoningContent(
+                                    ReasoningContentBlockDelta::Text(text),
+                                ) if !text.is_empty() => {
+                                    yield Ok(LlmEvent::Reasoning(text.clone()));
                                 }
                                 _ => {}
                             }

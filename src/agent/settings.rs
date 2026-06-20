@@ -298,10 +298,12 @@ mod tests {
 
     #[test]
     fn active_model_tracks_provider() {
-        let mut s = AgentSettings::default();
-        s.openai_model = "gpt-x".into();
-        s.anthropic_model = "claude-y".into();
-        s.bedrock_model = "anthropic.claude-z".into();
+        let mut s = AgentSettings {
+            openai_model: "gpt-x".into(),
+            anthropic_model: "claude-y".into(),
+            bedrock_model: "anthropic.claude-z".into(),
+            ..Default::default()
+        };
 
         s.provider = Provider::Openai;
         assert_eq!(s.active_model(), "gpt-x");
