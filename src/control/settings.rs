@@ -58,7 +58,7 @@ pub const THEME_PALETTES: &[&str] = &[
     "helios", "slate", "emerald", "indigo", "homebrew", "dracula",
 ];
 pub const THEME_DEFAULT_APPEARANCE: &str = "dark";
-pub const THEME_DEFAULT_PALETTE: &str = "slate";
+pub const THEME_DEFAULT_PALETTE: &str = "helios";
 
 /// Maps a stored palette value to a shipping palette id; legacy/unknown ids
 /// (e.g. pre-rename "github") fall back to the default.

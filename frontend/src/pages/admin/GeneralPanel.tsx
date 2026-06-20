@@ -81,7 +81,7 @@ function ThemeDefaults({
 }) {
     const { updateDefaults } = useTheme();
     const [appearance, setAppearance] = useState<"light" | "dark">("dark");
-    const [palette, setPalette] = useState("slate");
+    const [palette, setPalette] = useState("helios");
     const [busy, setBusy] = useState(false);
     const [saved, setSaved] = useState(false);
     const [error, setError] = useState<string | null>(null);
