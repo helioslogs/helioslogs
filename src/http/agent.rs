@@ -130,7 +130,7 @@ pub(super) async fn send_message_handler(
 
     let engine = AgentEngine {
         catalog: s.catalog.clone(),
-        fields: s.fields.clone(),
+        fields: s.fields,
         control: s.control.clone(),
     };
     let user_id = principal.user_id.clone();

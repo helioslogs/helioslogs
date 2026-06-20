@@ -150,6 +150,7 @@ impl Stat {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn discover_fields(
     catalog: &Catalog,
     _fields: &Fields,
@@ -339,6 +340,7 @@ impl FieldAccumC {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn field_catalog(
     catalog: &Catalog,
     query_str: &str,

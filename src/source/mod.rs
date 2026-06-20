@@ -274,9 +274,7 @@ fn parse_s3_path(path: &str) -> Result<(String, String)> {
 /// The literal directory prefix of a glob (up to the first metachar, trimmed to
 /// the last `/`) — what we hand to `list` so S3 only returns plausible keys.
 fn literal_prefix(glob: &str) -> String {
-    let end = glob
-        .find(|c| matches!(c, '*' | '?' | '[' | '{'))
-        .unwrap_or(glob.len());
+    let end = glob.find(['*', '?', '[', '{']).unwrap_or(glob.len());
     match glob[..end].rfind('/') {
         Some(i) => glob[..=i].to_string(),
         None => String::new(),

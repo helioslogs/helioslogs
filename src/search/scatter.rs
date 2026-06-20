@@ -43,6 +43,7 @@ pub fn plan(
 
 /// Same as [`plan`] but narrows to `explicit_keys` (streaming search). Keys are
 /// **intersected** with the full planned set, so RBAC/time/env gates still apply.
+#[allow(clippy::too_many_arguments)]
 pub fn plan_with_explicit_keys(
     catalog: &Catalog,
     query_str: &str,

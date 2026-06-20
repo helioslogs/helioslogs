@@ -1317,6 +1317,7 @@ fn arg_u32(args: &Value, key: &str, default: u32) -> u32 {
 
 /// Parse `start`/`end` with the same rules as the HTTP layer; duplicated
 /// here to avoid a dotted-line dep on `crate::http::time`.
+#[allow(clippy::type_complexity)]
 fn arg_range(
     args: &Value,
     default_start: &str,

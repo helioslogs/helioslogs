@@ -233,7 +233,7 @@ pub(super) async fn run_monitor_live_handler(
     let (tx, rx) = mpsc::channel::<AgentEvent>(64);
 
     let catalog = s.catalog.clone();
-    let fields = s.fields.clone();
+    let fields = s.fields;
     let control = s.control.clone();
     let owner = principal.user_id.clone();
     let mid = id.clone();

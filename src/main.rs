@@ -50,8 +50,58 @@ mod self_logs;
 mod source;
 mod syslog;
 
+// Env-var reference appended to `--help` (and `serve --help`). These are honored
+// in addition to the CLI flags; tuning knobs follow env > Admin setting > default.
+const ENV_HELP: &str = "\
+Environment variables (optional; override built-in defaults):
+
+Storage engine (live-tunable from Admin \u{2192} General unless noted):
+  HELIOS_BLOCK_COMPACT_SECS       Compactor interval, seconds [default: 30]
+  HELIOS_BLOCK_TARGET_MB          Compaction target block size, MB [default: 64]
+  HELIOS_BLOCK_MIN_COMPACT_MB     Min merge-group size before rewriting, MB [default: 5]
+  HELIOS_BLOCK_MAX_SMALL_BLOCKS   Small-block count that waives the floor [default: 100]
+  HELIOS_BLOCK_FLUSH_ROWS         Buffered-ingest row threshold to flush [default: 50000]
+  HELIOS_BLOCK_FLUSH_SECS         Buffered-ingest time threshold to flush, seconds [default: 5]
+  HELIOS_BLOCK_SYNC_SECS          Shared-store sync interval, seconds (--shared-store only) [default: 10]
+  HELIOS_BLOCK_QUEUE_CAP          Ingest channel depth / backpressure bound [default: 100000]
+  HELIOS_BLOCK_FLUSH_CONCURRENCY  Max concurrent block flushes [default: 2]
+  HELIOS_BLOCK_COMPRESSION        Block codec; off/none/0/false = uncompressed [default: zstd]
+
+Query:
+  HELIOS_QUERY_THREADS            Query fan-out thread pool size; restart-only [default: 4]
+  HELIOS_QUERY_CACHE_MB           Per-block match cache, MB; 0 disables [default: 1024]
+  HELIOS_AGG_MAX_PARTITIONS       Partitions scanned exactly before agg sampling [default: 96]
+
+Retention:
+  HELIOS_RETENTION_DEFAULT_DAYS   Global retention, days; 0/unset = keep forever
+  HELIOS_RETENTION_SWEEP_SECS     Retention sweep interval, seconds [default: 3600]
+
+Control plane & secrets:
+  HELIOS_CONTROL_ENCRYPTION       AES-256-GCM control-file encryption; 0/off/false/no disables [default: on]
+  HELIOS_CONTROL_KEY_PATH         32-byte control-key file [default: ./secret-control.json]
+  HELIOS_CONTROL_CACHE_TTL_SECS   Control read-cache TTL, seconds; 0 disables [default: 10]
+  HELIOS_JWT_SECRET_PATH          JWT signing-secret file [default: ./secret-jwt.json]
+
+Authentication:
+  HELIOS_AUTH_TOKEN_TTL_HOURS     Session (JWT) lifetime, hours [default: 168]
+
+First-run admin bootstrap (serve; a set password skips the setup screen):
+  HELIOS_ADMIN_USER               Admin username [default: admin]
+  HELIOS_ADMIN_PASSWORD           Admin password (enables non-interactive bootstrap)
+  HELIOS_ADMIN_EMAIL              Admin email [default: <user>@localhost]
+  HELIOS_ADMIN_RESET              Break-glass: reset the admin password on boot (truthy)
+
+Logging:
+  RUST_LOG                        Tracing filter [default: info,hyper=warn]";
+
 #[derive(Parser)]
-#[command(version, about = "Helios block-engine log indexer (partitioned)")]
+#[command(
+    version,
+    about = "Helios block-engine log indexer (partitioned)",
+    flatten_help = true,
+    after_help = "Run with --help to see the HELIOS_* / RUST_LOG environment variables the server honors.",
+    after_long_help = ENV_HELP
+)]
 struct Cli {
     /// Root directory for partitioned indexes.
     #[arg(long, default_value = "./data", global = true)]
@@ -69,16 +119,21 @@ struct Cli {
 enum Cmd {
     /// Search across all partitions (or a specific index).
     Search {
+        /// Query string in the Helios query language.
         query: String,
+        /// Restrict to a single index; omit to search every index.
         #[arg(long)]
         index: Option<String>,
+        /// Max rows to print.
         #[arg(long, default_value_t = 10)]
         limit: usize,
     },
     /// Describe the catalog: list all partitions with doc + segment counts.
     Describe,
     /// Start the HTTP server (MCP exposed at `POST /mcp`).
+    #[command(after_long_help = ENV_HELP)]
     Serve {
+        /// HTTP listen port.
         #[arg(long, default_value_t = 7300)]
         port: u16,
         /// Bind address. Defaults to loopback; set `0.0.0.0` to listen on all interfaces (e.g. in Docker).
@@ -87,7 +142,7 @@ enum Cmd {
         /// Shared store for blocks + manifests: an FS/NFS path or `s3://bucket/prefix`. Omit for single-node local-only.
         #[arg(long)]
         shared_store: Option<String>,
-        /// Built SPA dir (e.g. `frontend/dist`); mounted at `/` with an index.html fallback, after `/api` + `/mcp`.
+        /// Optional override for built-in frontend SPA directory to serve at /.
         #[arg(long)]
         frontend_dir: Option<PathBuf>,
         /// Override the syslog listener port from the control plane (UDP + TCP) — handy

@@ -36,7 +36,7 @@ pub(super) async fn handler(
     // because `tools::call` moves it into `spawn_blocking`.
     let server = Arc::new(McpServer {
         catalog: state.catalog.clone(),
-        fields: state.fields.clone(),
+        fields: state.fields,
         control: state.control.clone(),
     });
 
@@ -74,9 +74,8 @@ pub(super) async fn handler(
 /// The dispatcher then accepts (no auth configured) or rejects (auth configured) the call.
 fn bearer_token(headers: &HeaderMap) -> Option<String> {
     let raw = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let mut parts = raw.splitn(2, ' ');
-    let scheme = parts.next()?;
-    let token = parts.next()?;
+    let (scheme, token) = raw.split_once(' ')?;
+
     if scheme.eq_ignore_ascii_case("Bearer") {
         Some(token.trim().to_string())
     } else {

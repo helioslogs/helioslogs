@@ -201,7 +201,7 @@ fn swap_blocks_replaces_set() {
     // Compaction-style swap: replace {a, b} with one merged block c.
     let c = store.append_block(&k, &one_row_block(3, "c")).unwrap();
     store
-        .swap_blocks(&k, &[a.clone(), b.clone()], &[c.clone()])
+        .swap_blocks(&k, &[a.clone(), b.clone()], std::slice::from_ref(&c))
         .unwrap();
     let blocks = store.load_manifest(&k).unwrap().blocks;
     assert_eq!(blocks, vec![c]);
@@ -221,13 +221,13 @@ fn guarded_swap_aborts_when_inputs_already_merged() {
     // C1 wins.
     let m1 = store.write_block(&k, &one_row_block(9, "m1")).unwrap();
     assert!(store
-        .swap_blocks_if_present(&k, &[a.clone(), b.clone()], &[m1.clone()])
+        .swap_blocks_if_present(&k, &[a.clone(), b.clone()], std::slice::from_ref(&m1))
         .unwrap());
 
     // C2 loses: its inputs {a,b} are already gone.
     let m2 = store.write_block(&k, &one_row_block(9, "m2")).unwrap();
     let committed = store
-        .swap_blocks_if_present(&k, &[a, b], &[m2.clone()])
+        .swap_blocks_if_present(&k, &[a, b], std::slice::from_ref(&m2))
         .unwrap();
     assert!(!committed, "guarded swap must abort when inputs are gone");
     assert_eq!(

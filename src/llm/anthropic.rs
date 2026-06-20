@@ -259,9 +259,11 @@ impl LlmProvider for AnthropicProvider {
             let body = resp.text().await.unwrap_or_default();
             return Err(anyhow!("Anthropic {}: {}", status, body));
         }
-        if resp.headers().get("content-type").map_or(false, |v| {
-            v.to_str().unwrap_or("").starts_with("application/json")
-        }) {
+        if resp
+            .headers()
+            .get("content-type")
+            .is_some_and(|v| v.to_str().unwrap_or("").starts_with("application/json"))
+        {
             // Server returned a non-streaming response (usually an
             // error envelope despite a 200). Surface its body.
             let body = resp.text().await.unwrap_or_default();

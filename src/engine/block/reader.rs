@@ -249,6 +249,7 @@ impl Block {
     /// Display columns (`message`, `source`, `raw`) for just `rows` (ascending,
     /// unique), in `rows` order — the hit-rendering path, which needs only the
     /// surviving candidates, not every row in the block.
+    #[allow(clippy::type_complexity)]
     pub fn display_rows(
         &self,
         rows: &[u32],

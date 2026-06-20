@@ -196,6 +196,7 @@ impl AgentEngine {
 
     /// Full agent loop with explicit mode + system prompt; `run_turn` wraps
     /// this for chat, the scheduler calls it directly for monitor runs.
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_turn_with_mode(
         &self,
         mode: ToolMode,
@@ -220,7 +221,7 @@ impl AgentEngine {
         }
         let ctx = ToolContext {
             catalog: self.catalog.clone(),
-            fields: self.fields.clone(),
+            fields: self.fields,
             control: self.control.clone(),
             mode: mode.clone(),
             env: env.to_string(),
@@ -523,8 +524,7 @@ impl AgentEngine {
             });
 
             for c in &iter_calls {
-                let args_json: Value =
-                    serde_json::from_str(&c.arguments).unwrap_or_else(|_| Value::Null);
+                let args_json: Value = serde_json::from_str(&c.arguments).unwrap_or(Value::Null);
                 let global_idx = persisted_calls.len();
 
                 let _ = tx
@@ -698,6 +698,7 @@ async fn abort_with_error(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn finalize(
     control: &Control,
     user_id: &str,

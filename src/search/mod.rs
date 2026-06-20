@@ -57,6 +57,7 @@ pub struct SearchResponse {
     pub table: Option<crate::search::pipeline::Table>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn search(
     catalog: &Catalog,
     fields: &Fields,
@@ -138,7 +139,7 @@ pub fn search(
         .collect();
 
     // Cross-partition sort, then take the requested page slice.
-    all_hits.sort_by(|a, b| b.0.cmp(&a.0));
+    all_hits.sort_by_key(|b| std::cmp::Reverse(b.0));
     let page: Vec<Hit> = all_hits
         .into_iter()
         .skip(offset)
@@ -173,6 +174,7 @@ pub struct HistogramResponse {
     pub buckets: Vec<HistogramBucket>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn histogram(
     catalog: &Catalog,
     _fields: &Fields,
@@ -290,6 +292,7 @@ pub fn search_histogram(
 
     let engine = select_read_engine(catalog, fields);
     let time = TimeRange { start, end };
+    #[allow(clippy::type_complexity)]
     let partials: Vec<(u64, Vec<(i64, Hit)>, BTreeMap<i64, u64>)> = keys
         .par_iter()
         .map(|k| engine.search_histogram(k, stripped.as_ref(), time, per_partition_limit, interval))
@@ -322,7 +325,7 @@ pub fn search_histogram(
         }
     }
 
-    all_hits.sort_by(|a, b| b.0.cmp(&a.0));
+    all_hits.sort_by_key(|b| std::cmp::Reverse(b.0));
     let page: Vec<Hit> = all_hits
         .into_iter()
         .skip(offset)
@@ -395,6 +398,7 @@ pub struct AggregateResponse {
 /// `index` is a partition key computed at the catalog layer, not an engine agg.
 pub const SYNTHETIC_AGG_FIELD: &str = "index";
 
+#[allow(clippy::too_many_arguments)]
 pub fn aggregate(
     catalog: &Catalog,
     _fields: &Fields,
@@ -532,8 +536,8 @@ pub fn aggregate(
 
     let mut out: BTreeMap<String, Vec<TopBucket>> = BTreeMap::new();
     for (name, bucket_map) in merged {
-        let mut items: Vec<(u64, Value)> = bucket_map.into_values().map(|(c, k)| (c, k)).collect();
-        items.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut items: Vec<(u64, Value)> = bucket_map.into_values().collect();
+        items.sort_by_key(|b| std::cmp::Reverse(b.0));
         items.truncate(size as usize);
         let buckets: Vec<TopBucket> = items
             .into_iter()
@@ -549,7 +553,7 @@ pub fn aggregate(
             .filter(|(_, c)| *c > 0)
             .map(|(name, c)| (c, Value::String(name)))
             .collect();
-        items.sort_by(|a, b| b.0.cmp(&a.0));
+        items.sort_by_key(|b| std::cmp::Reverse(b.0));
         items.truncate(size as usize);
         let buckets: Vec<TopBucket> = items
             .into_iter()

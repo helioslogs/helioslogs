@@ -243,7 +243,9 @@ mod tests {
         let k = key("2026-01-01");
         let a = local.append_block(&k, &blk(1, "a")).unwrap();
         shared.put_block(&k, &a, &blk(1, "a")).unwrap();
-        shared.swap_blocks(&k, &[], &[a.clone()]).unwrap();
+        shared
+            .swap_blocks(&k, &[], std::slice::from_ref(&a))
+            .unwrap();
 
         let ctx = RetentionSnapshot {
             local: local.clone(),
