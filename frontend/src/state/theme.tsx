@@ -28,7 +28,7 @@ export const PALETTES: { id: PaletteId; label: string; blurb: string }[] = [
 
 const THEME_KEY = "helios-theme";
 const PALETTE_KEY = "helios-palette";
-const BUILTIN_DEFAULTS = { theme: "dark" as Theme, palette: "slate" as PaletteId };
+const BUILTIN_DEFAULTS = { theme: "dark" as Theme, palette: "helios" as PaletteId };
 
 function asTheme(v: unknown): Theme | null {
     return v === "light" || v === "dark" ? v : null;
