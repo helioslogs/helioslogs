@@ -12,9 +12,19 @@ HeliosLogs is a modern log search tool with analytics & AI.
 
 `frontend` - search & admin ui
 
-## Quickstart (Docker)
+## Quickstart
 
-The fastest way to run HeliosLogs is the published image on Docker Hub:
+Several options to get started. Full walkthrough:
+[Quickstart docs](https://docs.helioslogs.com/start/quickstart).
+
+**Native install (macOS / Linux)** — detects your OS and installs the native package:
+
+```bash
+curl -fsSL https://www.helioslogs.com/install.sh | sh
+```
+
+**Containers** — run the published image (Podman: same flags, prefix the image with
+`docker.io/`):
 
 ```bash
 docker pull helioslogs/helioslogs:latest
@@ -34,7 +44,7 @@ docker run -p 7300:7300 \
 cargo build --release
 
 # start — the UI is served from the embedded bundle
-./target/release/helioslogs --data-dir ./data serve --port 7300
+./target/release/helioslogs serve --port 7300 --data-dir ./data
 #  listening on http://127.0.0.1:7300
 ```
 
