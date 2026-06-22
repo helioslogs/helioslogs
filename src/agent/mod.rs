@@ -152,6 +152,8 @@ pub struct AgentEngine {
     pub catalog: Catalog,
     pub fields: Fields,
     pub control: Control,
+    /// Read-only demo instance: write tools are withheld from interactive chat.
+    pub demo_mode: bool,
 }
 
 impl AgentEngine {
@@ -225,6 +227,17 @@ impl AgentEngine {
             control: self.control.clone(),
             mode: mode.clone(),
             env: env.to_string(),
+            demo_mode: self.demo_mode,
+        };
+
+        // On a demo instance, withhold write tools so the model never offers to
+        // mutate anything; reads (query, discover, list_*) stay available.
+        let tool_defs = {
+            let mut defs = tools::tool_defs(&mode);
+            if self.demo_mode {
+                defs.retain(|d| !tools::is_demo_write_tool(&d.name));
+            }
+            defs
         };
 
         // Persist the user turn first so a refresh during streaming
@@ -260,10 +273,8 @@ impl AgentEngine {
             tool_call_id: None,
             name: None,
         }];
-        let allowed_tools: std::collections::HashSet<String> = tools::tool_defs(&mode)
-            .into_iter()
-            .map(|d| d.name)
-            .collect();
+        let allowed_tools: std::collections::HashSet<String> =
+            tool_defs.iter().map(|d| d.name.clone()).collect();
         wire.extend(store::turns_to_llm_messages(
             &detail.turns,
             HISTORY_TURNS,
@@ -299,7 +310,7 @@ impl AgentEngine {
         // Outer loop = iterations of the agentic dance (model → tool calls → model → ...).
         for _ in 0..MAX_AGENT_ITERATIONS {
             let mut stream = match provider
-                .stream(wire.clone(), tools::tool_defs(&mode), AGENT_TEMPERATURE)
+                .stream(wire.clone(), tool_defs.clone(), AGENT_TEMPERATURE)
                 .await
             {
                 Ok(s) => s,

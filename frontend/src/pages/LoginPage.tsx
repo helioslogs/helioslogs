@@ -12,10 +12,10 @@ import { getSamlStatus } from "../api/client";
 // the admin break-glass path when SSO is the default.
 const wantsLocal = () => new URLSearchParams(window.location.search).get("local") === "1";
 
-export function LoginPage() {
+export function LoginPage({ demo }: { demo?: { login: string; password: string } }) {
     const { login } = useAuth();
-    const [loginField, setLoginField] = useState("");
-    const [password, setPassword] = useState("");
+    const [loginField, setLoginField] = useState(demo?.login ?? "");
+    const [password, setPassword] = useState(demo?.password ?? "");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [redirecting, setRedirecting] = useState(false);
@@ -97,6 +97,13 @@ export function LoginPage() {
                         </div>
                     </div>
                 </div>
+
+                {demo && (
+                    <div className="mb-4 px-3 py-2 rounded-md bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900">
+                        Live Demo mode — just click <span className="font-medium">Sign in</span> to
+                        explore.
+                    </div>
+                )}
 
                 {sso.enabled && sso.local_login_disabled && (
                     <div className="mb-4 px-3 py-2 rounded-md bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900">

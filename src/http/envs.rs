@@ -35,10 +35,16 @@ pub(super) async fn list_envs_handler(
             );
         }
     };
+    // The admin-set login default rides along so the picker / admin page can
+    // mark it; `None` when unset or pointing at a deleted env.
+    let default_env = s.control.default_env().await.ok().flatten();
     // Admins always see every (non-system) env. Non-admins filter to
     // their explicit grants.
     if principal.is_admin {
-        return (StatusCode::OK, Json(json!({ "envs": all })));
+        return (
+            StatusCode::OK,
+            Json(json!({ "envs": all, "default_env": default_env })),
+        );
     }
     let rules = match s.control.user_allowed(&principal.user_id).await {
         Ok(v) => v,
@@ -52,14 +58,20 @@ pub(super) async fn list_envs_handler(
     // Empty allowlist is the "unrestricted" sentinel — same semantics
     // as enforce_env_access. Return every non-system env.
     if rules.is_empty() {
-        return (StatusCode::OK, Json(json!({ "envs": all })));
+        return (
+            StatusCode::OK,
+            Json(json!({ "envs": all, "default_env": default_env })),
+        );
     }
     let granted: HashSet<String> = rules.into_iter().map(|r| r.env).collect();
     let filtered: Vec<_> = all
         .into_iter()
         .filter(|e| granted.contains(&e.name))
         .collect();
-    (StatusCode::OK, Json(json!({ "envs": filtered })))
+    (
+        StatusCode::OK,
+        Json(json!({ "envs": filtered, "default_env": default_env })),
+    )
 }
 
 #[derive(Deserialize)]
@@ -75,6 +87,53 @@ pub(super) async fn create_env_handler(
         Ok(env) => (StatusCode::OK, Json(json!({ "env": env }))),
         Err(e) => (
             StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReorderEnvsRequest {
+    /// User env names in the desired picker order (ascending).
+    pub names: Vec<String>,
+}
+
+pub(super) async fn reorder_envs_handler(
+    State(s): State<AppState>,
+    Json(req): Json<ReorderEnvsRequest>,
+) -> impl IntoResponse {
+    match s.control.reorder_envs(&req.names).await {
+        Ok(envs) => (StatusCode::OK, Json(json!({ "envs": envs }))),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct SetDefaultEnvRequest {
+    pub name: String,
+}
+
+pub(super) async fn set_default_env_handler(
+    State(s): State<AppState>,
+    Json(req): Json<SetDefaultEnvRequest>,
+) -> impl IntoResponse {
+    match s.control.set_default_env(&req.name).await {
+        Ok(name) => (StatusCode::OK, Json(json!({ "default_env": name }))),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+pub(super) async fn clear_default_env_handler(State(s): State<AppState>) -> impl IntoResponse {
+    match s.control.clear_default_env().await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "default_env": null }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),
         ),
     }

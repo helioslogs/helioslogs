@@ -40,6 +40,28 @@ pub struct ToolContext {
     pub control: Control,
     pub mode: ToolMode,
     pub env: String,
+    /// Read-only demo instance: write tools are hidden from the model and refused
+    /// if called anyway. See [`is_demo_write_tool`].
+    pub demo_mode: bool,
+}
+
+/// Tools that mutate control-plane / data state — withheld from the demo account
+/// in demo mode (other users keep them). `raise_alert` is intentionally absent: it
+/// only fires from background monitor runs, not user-driven chat. Keep in sync with
+/// the write dispatch arms below.
+pub fn is_demo_write_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "ingest_events"
+            | "create_monitor"
+            | "update_monitor"
+            | "delete_monitor"
+            | "set_monitor_enabled"
+            | "run_monitor_now"
+            | "acknowledge_alert"
+            | "create_dashboard"
+            | "update_dashboard"
+    )
 }
 
 /// Tool descriptors advertised to the model; search-tool descriptions mirror
@@ -365,6 +387,14 @@ pub fn is_terminal(tool_name: &str) -> bool {
 /// Execute a tool by name; engine queries run on `spawn_blocking`. Returns the
 /// JSON payload fed back as the next `role: "tool"` message content.
 pub async fn execute(ctx: &ToolContext, name: &str, args: &Value) -> Result<Value> {
+    // Defense-in-depth: write tools are already filtered out of the catalog in
+    // demo mode (see `run_turn_with_mode`), but refuse them here too in case the
+    // model hallucinates the name. The error is fed back as a tool result.
+    if ctx.demo_mode && is_demo_write_tool(name) {
+        return Err(anyhow!(
+            "'{name}' is disabled on this read-only demo instance"
+        ));
+    }
     // Cheap UI-signal tool — no IO, no blocking work.
     if name == "suggest_followups" {
         return Ok(suggest_followups(args));

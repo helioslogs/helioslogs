@@ -211,6 +211,13 @@ pub(crate) async fn auth_layer(
             .into_response();
     }
 
+    // Demo mode: reject mutating APIs for the one restricted demo account only;
+    // every other user keeps full write access. Agent chat and auth (e.g. logout)
+    // stay open even for the demo user; ingest is public and returned earlier.
+    if s.demo.restricts(&user.userid, &user.email) && is_demo_blocked_write(req.method(), path) {
+        return demo_write_blocked();
+    }
+
     let active_env = env_query(req.uri()).unwrap_or_default();
     req.extensions_mut()
         .insert(Principal::from_user_env(&user, active_env));
@@ -385,15 +392,46 @@ pub(super) async fn login_handler(
         Err(e) => return internal_error(e),
     };
 
-    // Echo `default` as active env; the client overrides it from localStorage.
+    // Echo the admin-configured default env; the client applies it only when the
+    // browser has no stored env preference (returning users keep their last env).
+    let active_env = initial_env_for(&s.control, &user).await;
     (
         StatusCode::OK,
         Json(json!({
             "token": token,
-            "user": Principal::from_user_env(&user, crate::catalog::DEFAULT_ENV.to_string()),
+            "user": Principal::from_user_env(&user, active_env),
         })),
     )
         .into_response()
+}
+
+/// Initial active env echoed at login: the admin-configured default (validated),
+/// narrowed to an env the caller may actually reach. Falls back to `DEFAULT_ENV`.
+async fn initial_env_for(control: &crate::control::Control, user: &User) -> String {
+    let default_env = control
+        .default_env()
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| crate::catalog::DEFAULT_ENV.to_string());
+    if user.is_admin {
+        return default_env;
+    }
+    // Non-admins with an allowlist that excludes the default land on their first
+    // granted env instead of a view they can't open. Empty allowlist = unrestricted.
+    let allowed = control.user_allowed(&user.id).await.unwrap_or_default();
+    if allowed.is_empty()
+        || allowed
+            .iter()
+            .any(|r| r.env.eq_ignore_ascii_case(&default_env))
+    {
+        return default_env;
+    }
+    allowed
+        .into_iter()
+        .map(|r| r.env)
+        .next()
+        .unwrap_or_else(|| crate::catalog::DEFAULT_ENV.to_string())
 }
 
 /// First-run probe: tells the SPA whether to show the setup screen instead of login.
@@ -419,6 +457,13 @@ pub(super) async fn setup_status_handler(State(s): State<AppState>) -> Response 
             .ok()
             .flatten(),
     );
+    // Demo mode rides along so the login page can flip into read-only mode and
+    // pre-fill the throwaway demo account; creds are only advertised when demo is on.
+    let (demo_login, demo_password) = if s.demo.enabled {
+        (s.demo.login.clone(), s.demo.password.clone())
+    } else {
+        (None, None)
+    };
     match s.control.user_count().await {
         Ok(n) => (
             StatusCode::OK,
@@ -426,6 +471,9 @@ pub(super) async fn setup_status_handler(State(s): State<AppState>) -> Response 
                 "needs_setup": n == 0,
                 "default_appearance": appearance,
                 "default_palette": palette,
+                "demo_mode": s.demo.enabled,
+                "demo_login": demo_login,
+                "demo_password": demo_password,
             })),
         )
             .into_response(),
@@ -627,6 +675,32 @@ pub(super) async fn update_preferences_handler(
 
 fn bad_request(msg: &str) -> Response {
     (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+}
+
+/// True for a mutating request that demo mode rejects. Agent chat (`/api/agent/`)
+/// and auth (`/api/auth/`, e.g. logout) stay open; ingest is public and already
+/// returned earlier. Read methods (GET/HEAD/OPTIONS) are always allowed.
+fn is_demo_blocked_write(method: &axum::http::Method, path: &str) -> bool {
+    use axum::http::Method;
+    if !matches!(
+        *method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    ) {
+        return false;
+    }
+    !(path.starts_with("/api/agent/") || path.starts_with("/api/auth/"))
+}
+
+/// 403 carrying `demo_mode: true` so the SPA can show a friendly read-only notice.
+fn demo_write_blocked() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({
+            "error": "This is a read-only demo \u{2014} changes are disabled.",
+            "demo_mode": true,
+        })),
+    )
+        .into_response()
 }
 
 fn internal_error(e: anyhow::Error) -> Response {

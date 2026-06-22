@@ -655,6 +655,7 @@ impl Control {
 // Envs (single-document: `envs.json`).
 
 use super::envs::EnvRow;
+use super::settings::KEY_DEFAULT_ENV;
 use crate::catalog::{valid_env_name, DEFAULT_ENV, SYSTEM_ENV};
 
 #[derive(Default, Serialize, Deserialize)]
@@ -665,6 +666,14 @@ struct EnvsDoc {
 
 const ENVS_KEY: &str = "envs.json";
 
+/// Next display position: one past the current max (so new envs land last).
+fn next_order_index(envs: &[EnvRow]) -> i64 {
+    envs.iter()
+        .map(|e| e.order_index)
+        .max()
+        .map_or(0, |m| m + 1)
+}
+
 impl Control {
     /// Insert `name` if absent (no-op if it already exists).
     pub async fn upsert_env(&self, name: &str, is_system: bool) -> Result<()> {
@@ -674,11 +683,13 @@ impl Control {
             .mutate_doc::<EnvsDoc, (), _>(ENVS_KEY, |doc| {
                 let mut doc = doc.unwrap_or_default();
                 if !doc.envs.iter().any(|e| e.name.eq_ignore_ascii_case(&name)) {
+                    let order_index = next_order_index(&doc.envs);
                     doc.envs.push(EnvRow {
                         name: name.clone(),
                         is_system,
                         created_at: created_at.clone(),
                         retention_days: None,
+                        order_index,
                     });
                 }
                 Ok((doc, ()))
@@ -730,6 +741,7 @@ impl Control {
                     is_system: false,
                     created_at: created_at.clone(),
                     retention_days: None,
+                    order_index: next_order_index(&doc.envs),
                 };
                 doc.envs.push(row.clone());
                 Ok((doc, row))
@@ -737,8 +749,8 @@ impl Control {
             .await
     }
 
-    /// Lists every env, optionally including reserved system envs. Sorted with
-    /// user envs first, then by name.
+    /// Lists every env, optionally including reserved system envs. System envs
+    /// sort last; user envs follow the admin-set `order_index` (name as tiebreak).
     pub async fn list_envs(&self, include_system: bool) -> Result<Vec<EnvRow>> {
         let doc: EnvsDoc = self.backend.read_or_default(ENVS_KEY).await?;
         let mut envs: Vec<EnvRow> = doc
@@ -746,8 +758,55 @@ impl Control {
             .into_iter()
             .filter(|e| include_system || !e.is_system)
             .collect();
-        envs.sort_by(|a, b| (a.is_system, &a.name).cmp(&(b.is_system, &b.name)));
+        envs.sort_by(|a, b| {
+            (a.is_system, a.order_index, &a.name).cmp(&(b.is_system, b.order_index, &b.name))
+        });
         Ok(envs)
+    }
+
+    /// Rewrites env display order from `names` (ascending). Every name must exist;
+    /// envs not listed keep their relative order after the listed ones.
+    pub async fn reorder_envs(&self, names: &[String]) -> Result<Vec<EnvRow>> {
+        let names: Vec<String> = names.iter().map(|s| s.trim().to_string()).collect();
+        self.backend
+            .mutate_doc::<EnvsDoc, Vec<EnvRow>, _>(ENVS_KEY, |doc| {
+                let mut doc = doc.unwrap_or_default();
+                for n in &names {
+                    if !doc.envs.iter().any(|e| e.name.eq_ignore_ascii_case(n)) {
+                        bail!("env '{n}' does not exist");
+                    }
+                }
+                let listed: std::collections::HashMap<String, i64> = names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| (n.to_ascii_lowercase(), i as i64))
+                    .collect();
+                // Unlisted envs sort after the listed ones, preserving current order.
+                let mut rest: Vec<(i64, String)> = doc
+                    .envs
+                    .iter()
+                    .filter(|e| !listed.contains_key(&e.name.to_ascii_lowercase()))
+                    .map(|e| (e.order_index, e.name.to_ascii_lowercase()))
+                    .collect();
+                rest.sort();
+                let base = names.len() as i64;
+                let rest_pos: std::collections::HashMap<String, i64> = rest
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, (_, n))| (n, base + k as i64))
+                    .collect();
+                for e in doc.envs.iter_mut() {
+                    let key = e.name.to_ascii_lowercase();
+                    if let Some(&i) = listed.get(&key) {
+                        e.order_index = i;
+                    } else if let Some(&i) = rest_pos.get(&key) {
+                        e.order_index = i;
+                    }
+                }
+                let out = doc.envs.clone();
+                Ok((doc, out))
+            })
+            .await
     }
 
     pub async fn env_exists(&self, name: &str) -> Result<bool> {
@@ -782,6 +841,38 @@ impl Control {
                 Ok((doc, ()))
             })
             .await
+    }
+
+    /// The admin-configured login default env, or `None` if unset or pointing at
+    /// an env that no longer exists (callers fall back to `DEFAULT_ENV`).
+    pub async fn default_env(&self) -> Result<Option<String>> {
+        let Some(name) = self
+            .get_setting(KEY_DEFAULT_ENV)
+            .await?
+            .filter(|s| !s.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+        Ok(self.env_exists(&name).await?.then_some(name))
+    }
+
+    /// Sets the login default env. The env must exist and be a user env (`_*`
+    /// system envs are admin-only and never auto-selected).
+    pub async fn set_default_env(&self, name: &str) -> Result<String> {
+        let name = name.trim().to_string();
+        if name.starts_with('_') {
+            bail!("system env '{name}' cannot be the default for new users");
+        }
+        if !self.env_exists(&name).await? {
+            bail!("env '{name}' does not exist");
+        }
+        self.set_setting(KEY_DEFAULT_ENV, &name).await?;
+        Ok(name)
+    }
+
+    /// Clears the login default env (new users fall back to `default`).
+    pub async fn clear_default_env(&self) -> Result<()> {
+        self.unset_setting(KEY_DEFAULT_ENV).await
     }
 }
 

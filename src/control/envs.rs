@@ -15,4 +15,8 @@ pub struct EnvRow {
     /// `retention.default_days` setting (which itself may be "keep forever").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retention_days: Option<i64>,
+    /// Display order in the env picker (ascending). Assigned on create, rewritten
+    /// by reorder; legacy rows default to 0 and fall back to name ordering.
+    #[serde(default)]
+    pub order_index: i64,
 }

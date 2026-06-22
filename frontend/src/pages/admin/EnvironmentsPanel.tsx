@@ -4,19 +4,30 @@
 // Delete is refused (backend-enforced) for reserved or non-empty envs.
 
 import { useCallback, useEffect, useState } from "react";
-import { Boxes } from "lucide-react";
-import { createEnv, deleteEnv, listEnvs, setEnvRetention, type EnvRow } from "../../api/client";
+import { Boxes, ChevronDown, ChevronUp, Star } from "lucide-react";
+import {
+    createEnv,
+    deleteEnv,
+    listEnvsWithDefault,
+    reorderEnvs,
+    setDefaultEnv,
+    setEnvRetention,
+    type EnvRow,
+} from "../../api/client";
 import { Card, ErrorBanner, HelpFrame } from "../../components/admin";
 
 export function EnvironmentsPanel() {
     const [envs, setEnvs] = useState<EnvRow[]>([]);
+    const [defaultEnv, setDefaultEnvState] = useState<string | null>(null);
     const [name, setName] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const refresh = useCallback(async () => {
         try {
-            setEnvs(await listEnvs());
+            const { envs, defaultEnv } = await listEnvsWithDefault();
+            setEnvs(envs);
+            setDefaultEnvState(defaultEnv);
             setError(null);
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
@@ -67,6 +78,40 @@ export function EnvironmentsPanel() {
         }
     };
 
+    // Swap an env with its neighbour and persist the whole order.
+    const handleMove = async (index: number, dir: -1 | 1) => {
+        const target = index + dir;
+        if (target < 0 || target >= envs.length) return;
+        const next = envs.slice();
+        [next[index], next[target]] = [next[target], next[index]];
+        setEnvs(next); // optimistic
+        setBusy(true);
+        setError(null);
+        try {
+            await reorderEnvs(next.map((e) => e.name));
+            await refresh();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+            await refresh(); // revert to server truth
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // Toggle which env new users land on (clicking the current default clears it).
+    const handleToggleDefault = async (n: string) => {
+        setBusy(true);
+        setError(null);
+        try {
+            await setDefaultEnv(defaultEnv === n ? null : n);
+            await refresh();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setBusy(false);
+        }
+    };
+
     return (
         <Card title="Environments">
             <div className="p-6 space-y-4 max-w-3xl">
@@ -76,6 +121,11 @@ export function EnvironmentsPanel() {
                         monitor, and agent conversation belongs to exactly one env. Switch envs from
                         the top-nav picker; deletion is allowed only when the env has no on-disk
                         partitions and no control-plane references.
+                    </p>
+                    <p className="mt-2">
+                        Use the arrows to set the order envs appear in the picker, and the{" "}
+                        <Star className="inline w-3.5 h-3.5 -mt-0.5" /> to mark the env new users
+                        land on at first login (returning users keep their last-used env).
                     </p>
                 </HelpFrame>
                 <ErrorBanner error={error} />
@@ -112,14 +162,59 @@ export function EnvironmentsPanel() {
                             <code className="font-mono">default</code>.
                         </li>
                     )}
-                    {envs.map((e) => (
+                    {envs.map((e, i) => (
                         <li
                             key={e.name}
                             className="px-4 py-2 flex items-center gap-3 text-stone-700 dark:text-stone-300"
                         >
+                            <div className="flex flex-col -my-1">
+                                <button
+                                    type="button"
+                                    aria-label={`Move ${e.name} up`}
+                                    title="Move up"
+                                    onClick={() => void handleMove(i, -1)}
+                                    disabled={busy || i === 0}
+                                    className="text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronUp className="w-4 h-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    aria-label={`Move ${e.name} down`}
+                                    title="Move down"
+                                    onClick={() => void handleMove(i, 1)}
+                                    disabled={busy || i === envs.length - 1}
+                                    className="text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronDown className="w-4 h-4" />
+                                </button>
+                            </div>
                             <code className="font-mono font-semibold text-stone-900 dark:text-stone-100">
                                 {e.name}
                             </code>
+                            <button
+                                type="button"
+                                onClick={() => void handleToggleDefault(e.name)}
+                                disabled={busy}
+                                title={
+                                    defaultEnv === e.name
+                                        ? "Default for new users — click to clear"
+                                        : "Set as default for new users"
+                                }
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs transition disabled:opacity-40 ${
+                                    defaultEnv === e.name
+                                        ? "text-orange-500 hover:text-orange-400"
+                                        : "text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+                                }`}
+                            >
+                                <Star
+                                    className="w-3.5 h-3.5"
+                                    fill={defaultEnv === e.name ? "currentColor" : "none"}
+                                />
+                                {defaultEnv === e.name && (
+                                    <span className="font-medium">default</span>
+                                )}
+                            </button>
                             <span className="text-stone-700 dark:text-stone-300">
                                 created {e.created_at.slice(0, 10)}
                             </span>

@@ -91,6 +91,11 @@ First-run admin bootstrap (serve; a set password skips the setup screen):
   HELIOS_ADMIN_EMAIL              Admin email [default: <user>@localhost]
   HELIOS_ADMIN_RESET              Break-glass: reset the admin password on boot (truthy)
 
+Demo mode (serve):
+  HELIOS_DEMO_MODE                Read-only demo: reject all mutating APIs for every user (truthy)
+  HELIOS_DEMO_LOGIN               Demo account login pre-filled on the sign-in page
+  HELIOS_DEMO_PASSWORD            Demo account password pre-filled on the sign-in page
+
 Logging:
   RUST_LOG                        Tracing filter [default: info,hyper=warn]";
 
@@ -149,6 +154,18 @@ enum Cmd {
         /// for running several instances on one host. `0` disables the listener.
         #[arg(long, env = "HELIOS_SYSLOG_PORT")]
         syslog_port: Option<u16>,
+        /// Read-only demo mode: reject every mutating API (saved searches, monitors,
+        /// dashboards, users, settings, admin actions) for ALL users. Ingest and agent
+        /// chat stay open; agent/MCP write-tools are disabled too.
+        #[arg(long, env = "HELIOS_DEMO_MODE")]
+        demo: bool,
+        /// Demo login to pre-fill on the sign-in page (the account must already exist).
+        #[arg(long, env = "HELIOS_DEMO_LOGIN")]
+        demo_login: Option<String>,
+        /// Demo password to pre-fill alongside `--demo-login` (advertised to the public
+        /// pre-login page — only use a throwaway demo account).
+        #[arg(long, env = "HELIOS_DEMO_PASSWORD")]
+        demo_password: Option<String>,
     },
 }
 
@@ -248,6 +265,9 @@ fn main() -> Result<()> {
             shared_store,
             frontend_dir,
             syslog_port,
+            demo,
+            demo_login,
+            demo_password,
         } => {
             if let Some(dir) = &frontend_dir {
                 if !dir.join("index.html").is_file() {
@@ -266,6 +286,7 @@ fn main() -> Result<()> {
                 shared_store,
                 cli.verbose,
                 syslog_port,
+                http::DemoConfig::new(demo, demo_login, demo_password),
             ))
         }
     }

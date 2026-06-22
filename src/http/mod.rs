@@ -87,8 +87,42 @@ pub(crate) struct AppState {
     /// `--syslog-port` CLI override (UDP + TCP), if set — shadows the control-plane
     /// port so multiple instances can share a control plane but bind distinct ports.
     pub(crate) syslog_port: Option<u16>,
+    /// Read-only demo lockdown (`--demo`) + optional pre-fill creds for the login page.
+    pub(crate) demo: DemoConfig,
 }
 
+/// Demo-mode config (`--demo` / `HELIOS_DEMO_*`). When `enabled`, mutating APIs and
+/// agent/MCP write-tools are rejected for the single account named by `login` — every
+/// other user is unaffected. The login/password are advertised on the public login page
+/// so a visitor can click straight into the demo account.
+#[derive(Clone, Default)]
+pub struct DemoConfig {
+    pub enabled: bool,
+    pub login: Option<String>,
+    pub password: Option<String>,
+}
+
+impl DemoConfig {
+    pub fn new(enabled: bool, login: Option<String>, password: Option<String>) -> Self {
+        let clean = |s: Option<String>| s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        Self {
+            enabled,
+            login: clean(login),
+            password: clean(password),
+        }
+    }
+
+    /// True when demo mode is on AND `userid`/`email` identify the restricted demo
+    /// account (matched case-insensitively, since logins resolve either way).
+    pub fn restricts(&self, userid: &str, email: &str) -> bool {
+        self.enabled
+            && self.login.as_deref().is_some_and(|l| {
+                l.eq_ignore_ascii_case(userid.trim()) || l.eq_ignore_ascii_case(email.trim())
+            })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn serve(
     data_dir: PathBuf,
     host: String,
@@ -97,6 +131,7 @@ pub async fn serve(
     shared_store: Option<String>,
     verbose: bool,
     syslog_port: Option<u16>,
+    demo: DemoConfig,
 ) -> Result<()> {
     // Install the aws-lc-rs rustls provider before any HTTPS client (LLM, S3)
     // is built — our reqwest clients are compiled `-no-provider` and use it.
@@ -268,6 +303,17 @@ pub async fn serve(
         retention_gate,
     ));
 
+    if demo.enabled {
+        match &demo.login {
+            Some(login) => tracing::warn!(
+                login = %login,
+                "demo mode ON — mutating APIs + agent write-tools are read-only for this account; other users unaffected"
+            ),
+            None => tracing::warn!(
+                "demo mode ON but HELIOS_DEMO_LOGIN is unset — no account is restricted; set --demo-login"
+            ),
+        }
+    }
     let state = AppState {
         catalog,
         fields,
@@ -276,6 +322,7 @@ pub async fn serve(
         shared_store: shared_store.clone(),
         retention: retention_ctx,
         syslog_port,
+        demo,
     };
 
     // Monitor scheduler — every 10s, runs any monitor whose `interval_seconds` elapsed;
@@ -528,6 +575,13 @@ pub(crate) fn build_router(state: AppState, frontend_dir: Option<PathBuf>) -> Ro
         // ---- envs (read = any authed user, write = admin) ----
         .route("/api/envs", get(envs::list_envs_handler))
         .route("/api/admin/envs", post(envs::create_env_handler))
+        // Picker order + login default. Kept off the `/envs/:name` subtree so a
+        // user env named "reorder"/"default" can't shadow these static paths.
+        .route("/api/admin/env-order", post(envs::reorder_envs_handler))
+        .route(
+            "/api/admin/env-default",
+            put(envs::set_default_env_handler).delete(envs::clear_default_env_handler),
+        )
         .route(
             "/api/admin/envs/:name",
             patch(envs::patch_env_handler).delete(envs::delete_env_handler),
@@ -755,6 +809,10 @@ mod integration_tests {
     }
 
     async fn ctx() -> Ctx {
+        ctx_with_demo(DemoConfig::default()).await
+    }
+
+    async fn ctx_with_demo(demo: DemoConfig) -> Ctx {
         let dir = TempDir::new().unwrap();
         let store = Arc::new(FsControlStore::new(dir.path().join("control")));
         let control = Control::new(store, Arc::new(Crypto::Disabled));
@@ -782,6 +840,7 @@ mod integration_tests {
                 )),
             }),
             syslog_port: None,
+            demo,
         };
         let app = build_router(state, None);
         Ctx {
@@ -1960,6 +2019,185 @@ mod integration_tests {
         .await;
         assert_eq!(s_del, StatusCode::OK);
         assert_eq!(del["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn env_reorder_and_login_default() {
+        let c = ctx().await;
+        let t = admin(&c).await;
+
+        // Two user envs alongside the reserved `default`.
+        for n in ["alpha", "beta"] {
+            let (s, _) = send(
+                &c.app,
+                post_json("/api/admin/envs", Some(&t), json!({ "name": n })),
+            )
+            .await;
+            assert_eq!(s, StatusCode::OK);
+        }
+
+        // Reorder: the list echoes the requested order.
+        let (s_reorder, _) = send(
+            &c.app,
+            post_json(
+                "/api/admin/env-order",
+                Some(&t),
+                json!({ "names": ["beta", "default", "alpha"] }),
+            ),
+        )
+        .await;
+        assert_eq!(s_reorder, StatusCode::OK);
+        let (_, list) = send(&c.app, get("/api/envs", Some(&t))).await;
+        let names: Vec<&str> = list["envs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["name"].as_str())
+            .collect();
+        assert_eq!(names, vec!["beta", "default", "alpha"]);
+
+        // Set the login default; it rides along on the env list...
+        let (s_def, def) = send(
+            &c.app,
+            req(
+                "PUT",
+                "/api/admin/env-default",
+                Some(&t),
+                Some(json!({ "name": "beta" })),
+            ),
+        )
+        .await;
+        assert_eq!(s_def, StatusCode::OK);
+        assert_eq!(def["default_env"], "beta");
+        let (_, list2) = send(&c.app, get("/api/envs", Some(&t))).await;
+        assert_eq!(list2["default_env"], "beta");
+
+        // ...and a fresh login lands on it.
+        user(&c.control, "dave", false).await;
+        let creds = json!({ "login": "dave", "password": "pw12345678" });
+        let (s_login, login) =
+            send(&c.app, post_json("/api/auth/login", None, creds.clone())).await;
+        assert_eq!(s_login, StatusCode::OK);
+        assert_eq!(login["user"]["active_env"], "beta");
+
+        // A system env or an unknown env can't be the default.
+        for bad in ["_system", "ghost"] {
+            let (s, _) = send(
+                &c.app,
+                req(
+                    "PUT",
+                    "/api/admin/env-default",
+                    Some(&t),
+                    Some(json!({ "name": bad })),
+                ),
+            )
+            .await;
+            assert_eq!(s, StatusCode::BAD_REQUEST, "default should reject {bad}");
+        }
+
+        // Clearing falls back to `default` for new logins.
+        let (s_clear, _) = send(
+            &c.app,
+            req("DELETE", "/api/admin/env-default", Some(&t), None),
+        )
+        .await;
+        assert_eq!(s_clear, StatusCode::OK);
+        let (_, list3) = send(&c.app, get("/api/envs", Some(&t))).await;
+        assert!(list3["default_env"].is_null());
+        let (_, login2) = send(&c.app, post_json("/api/auth/login", None, creds)).await;
+        assert_eq!(login2["user"]["active_env"], "default");
+    }
+
+    #[tokio::test]
+    async fn demo_mode_restricts_only_the_demo_account() {
+        let demo = DemoConfig::new(true, Some("demo".into()), Some("demo-pw".into()));
+        let c = ctx_with_demo(demo).await;
+        // The restricted account (matches HELIOS_DEMO_LOGIN) and an unrelated user.
+        let demo_user = user(&c.control, "demo", false).await;
+        let demo_tok = token(&demo_user, &c.secret);
+        let admin_tok = admin(&c).await;
+
+        // Demo account: reads work...
+        let (s_read, _) = send(&c.app, get("/api/envs", Some(&demo_tok))).await;
+        assert_eq!(s_read, StatusCode::OK);
+
+        // ...but a (non-admin) mutating API is rejected with the demo marker.
+        let (s_w, body) = send(
+            &c.app,
+            req("POST", "/api/monitors", Some(&demo_tok), Some(json!({}))),
+        )
+        .await;
+        assert_eq!(s_w, StatusCode::FORBIDDEN, "demo account write blocked");
+        assert_eq!(body["demo_mode"], true);
+
+        // Agent chat + logout stay open even for the demo account.
+        let (s_agent, _) = send(
+            &c.app,
+            req(
+                "POST",
+                "/api/agent/conversations/nope/messages",
+                Some(&demo_tok),
+                Some(json!({ "content": "hi" })),
+            ),
+        )
+        .await;
+        assert_ne!(
+            s_agent,
+            StatusCode::FORBIDDEN,
+            "agent chat must not be gated"
+        );
+        let (s_logout, _) = send(
+            &c.app,
+            req("POST", "/api/auth/logout", Some(&demo_tok), None),
+        )
+        .await;
+        assert_ne!(s_logout, StatusCode::FORBIDDEN, "logout must not be gated");
+
+        // A DIFFERENT user writes freely even with demo mode on.
+        let (s_other, other) = send(
+            &c.app,
+            post_json(
+                "/api/admin/envs",
+                Some(&admin_tok),
+                json!({ "name": "staging" }),
+            ),
+        )
+        .await;
+        assert_eq!(s_other, StatusCode::OK, "non-demo user unaffected: {other}");
+        // ...and even a non-admin non-demo user isn't demo-gated (an empty body
+        // just fails validation in the handler, past the gate — no demo marker).
+        let alice = user(&c.control, "alice", false).await;
+        let (_, alice_body) = send(
+            &c.app,
+            req(
+                "POST",
+                "/api/monitors",
+                Some(&token(&alice, &c.secret)),
+                Some(json!({})),
+            ),
+        )
+        .await;
+        assert_ne!(
+            alice_body["demo_mode"], true,
+            "alice is not demo-restricted"
+        );
+
+        // setup_status advertises demo mode + the pre-fill creds (public).
+        let (s_setup, setup) = send(&c.app, get("/api/auth/setup_status", None)).await;
+        assert_eq!(s_setup, StatusCode::OK);
+        assert_eq!(setup["demo_mode"], true);
+        assert_eq!(setup["demo_login"], "demo");
+        assert_eq!(setup["demo_password"], "demo-pw");
+    }
+
+    #[tokio::test]
+    async fn non_demo_setup_status_hides_demo_creds() {
+        let c = ctx().await;
+        let (s, setup) = send(&c.app, get("/api/auth/setup_status", None)).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(setup["demo_mode"], false);
+        assert!(setup["demo_login"].is_null());
+        assert!(setup["demo_password"].is_null());
     }
 
     #[tokio::test]
