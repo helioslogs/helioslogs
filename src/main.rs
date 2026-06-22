@@ -169,10 +169,10 @@ enum Cmd {
         /// PEM private-key file for --ssl-port (PKCS#8 / PKCS#1 / SEC1).
         #[arg(long, env = "HELIOS_TLS_KEY")]
         tls_key: Option<PathBuf>,
-        /// Read-only demo mode: reject every mutating API (saved searches, monitors,
-        /// dashboards, users, settings, admin actions) for ALL users. Ingest and agent
-        /// chat stay open; agent/MCP write-tools are disabled too.
-        #[arg(long, env = "HELIOS_DEMO_MODE")]
+        /// Read-only demo mode: the account named by --demo-login can't use any mutating
+        /// API or agent write-tool (every other user is unaffected). Ingest and agent chat
+        /// stay open. Also enabled by a truthy HELIOS_DEMO_MODE (1/true/yes/on).
+        #[arg(long)]
         demo: bool,
         /// Demo login to pre-fill on the sign-in page (the account must already exist).
         #[arg(long, env = "HELIOS_DEMO_LOGIN")]
@@ -182,6 +182,20 @@ enum Cmd {
         #[arg(long, env = "HELIOS_DEMO_PASSWORD")]
         demo_password: Option<String>,
     },
+}
+
+/// Truthy test for a boolean env-var toggle: `1/true/yes/on` (case-insensitive);
+/// unset or anything else is false.
+fn env_flag(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on" | "y"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn main() -> Result<()> {
@@ -295,6 +309,10 @@ fn main() -> Result<()> {
                     );
                 }
             }
+            // `--demo` is a flag; also honor a truthy HELIOS_DEMO_MODE env var so it
+            // can be set from a systemd unit / container env (clap's bool+env would
+            // reject `1`). Mirrors the HELIOS_CONTROL_ENCRYPTION env convention.
+            let demo = demo || env_flag("HELIOS_DEMO_MODE");
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(http::serve(
                 cli.data_dir,
