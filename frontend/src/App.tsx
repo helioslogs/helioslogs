@@ -4,6 +4,7 @@ import {
     Bell,
     LayoutDashboard,
     Layers,
+    Lock,
     LogOut,
     Moon,
     Search as SearchIcon,
@@ -13,9 +14,10 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { getSamlStatus, getSetupStatus } from "./api/client";
+import { getSamlStatus, getSetupStatus, type SetupStatus } from "./api/client";
 import { AgentDrawer } from "./components/AgentDrawer";
 import { AlertToasts } from "./components/AlertToasts";
+import { DemoBlockedToast } from "./components/DemoBlockedToast";
 import { EnvPicker } from "./components/EnvPicker";
 import { AccountPage } from "./pages/AccountPage";
 import { AdminLayout } from "./pages/admin/AdminLayout";
@@ -58,24 +60,28 @@ import {
 export default function App() {
     const { user } = useAuth();
 
-    // When logged out, find out whether this is a fresh instance (no users yet) so
-    // we show the first-run setup screen instead of an un-claimable login form.
-    // `undefined` = probe in flight; only matters while `user === null`.
-    const [needsSetup, setNeedsSetup] = useState<boolean | undefined>(undefined);
+    // First-run probe (fetched once): tells us whether to show the setup screen,
+    // and whether this is a read-only demo instance (+ login pre-fill creds).
+    // `undefined` = probe in flight.
+    const [setup, setSetup] = useState<SetupStatus | undefined>(undefined);
     useEffect(() => {
-        if (user !== null) return;
         let cancelled = false;
         getSetupStatus()
             .then((s) => {
-                if (!cancelled) setNeedsSetup(s.needs_setup);
+                if (!cancelled) setSetup(s);
             })
             .catch(() => {
-                if (!cancelled) setNeedsSetup(false);
+                if (!cancelled) setSetup({ needs_setup: false });
             });
         return () => {
             cancelled = true;
         };
-    }, [user]);
+    }, []);
+
+    const demo =
+        setup?.demo_mode && setup.demo_login
+            ? { login: setup.demo_login, password: setup.demo_password ?? "" }
+            : undefined;
 
     // Three auth states: `undefined` = boot probe in flight; `null` = no
     // session, show login (or setup); otherwise the main app.
@@ -87,19 +93,26 @@ export default function App() {
         );
     }
     if (user === null) {
-        if (needsSetup === undefined) {
+        if (setup === undefined) {
             return (
                 <div className="h-screen flex items-center justify-center bg-stone-50 dark:bg-stone-950 text-stone-500 dark:text-stone-400">
                     Loading…
                 </div>
             );
         }
-        return needsSetup ? <SetupPage /> : <LoginPage />;
+        return setup.needs_setup ? <SetupPage /> : <LoginPage demo={demo} />;
     }
-    return <MainApp />;
+    // Demo lockdown applies only to the configured demo account, so the banner /
+    // read-only affordances show only when the signed-in user IS that account.
+    const login = setup?.demo_login?.toLowerCase();
+    const demoRestricted =
+        !!setup?.demo_mode &&
+        !!login &&
+        (user.userid.toLowerCase() === login || user.email.toLowerCase() === login);
+    return <MainApp demoMode={demoRestricted} />;
 }
 
-function MainApp() {
+function MainApp({ demoMode }: { demoMode: boolean }) {
     const { theme, toggleTheme } = useTheme();
     const panel = useAgentPanel();
     const navigate = useNavigate();
@@ -140,6 +153,16 @@ function MainApp() {
                 showLogout={!!user?.is_admin || !ssoOnly}
                 onLogout={() => void logout()}
             />
+
+            {demoMode && (
+                <div className="flex items-center justify-center gap-2 px-4 py-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-b border-amber-500/30 text-sm">
+                    <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>
+                        Read-only demo account — search and the AI assistant work, but saving
+                        changes is disabled.
+                    </span>
+                </div>
+            )}
 
             {/* Content shifts left to make room for the always-present Investigate
           panel. paddingRight tracks the panel's live width. */}
@@ -218,6 +241,7 @@ function MainApp() {
 
             <AgentDrawer panel={panel} />
             <AlertToasts />
+            <DemoBlockedToast />
         </div>
     );
 }

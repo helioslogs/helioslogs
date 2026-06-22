@@ -91,6 +91,16 @@ First-run admin bootstrap (serve; a set password skips the setup screen):
   HELIOS_ADMIN_EMAIL              Admin email [default: <user>@localhost]
   HELIOS_ADMIN_RESET              Break-glass: reset the admin password on boot (truthy)
 
+TLS / HTTPS (serve):
+  HELIOS_SSL_PORT                 HTTPS listen port (needs HELIOS_TLS_CERT + HELIOS_TLS_KEY)
+  HELIOS_TLS_CERT                 PEM certificate-chain file for the HTTPS listener
+  HELIOS_TLS_KEY                  PEM private-key file for the HTTPS listener
+
+Demo mode (serve):
+  HELIOS_DEMO_MODE                Read-only demo for the demo account only (truthy)
+  HELIOS_DEMO_LOGIN               Demo account login pre-filled on the sign-in page
+  HELIOS_DEMO_PASSWORD            Demo account password pre-filled on the sign-in page
+
 Logging:
   RUST_LOG                        Tracing filter [default: info,hyper=warn]";
 
@@ -149,7 +159,43 @@ enum Cmd {
         /// for running several instances on one host. `0` disables the listener.
         #[arg(long, env = "HELIOS_SYSLOG_PORT")]
         syslog_port: Option<u16>,
+        /// HTTPS listen port. Requires --tls-cert and --tls-key; served alongside the
+        /// plaintext --port (set --port 0 for HTTPS only).
+        #[arg(long, env = "HELIOS_SSL_PORT")]
+        ssl_port: Option<u16>,
+        /// PEM certificate chain file for --ssl-port.
+        #[arg(long, env = "HELIOS_TLS_CERT")]
+        tls_cert: Option<PathBuf>,
+        /// PEM private-key file for --ssl-port (PKCS#8 / PKCS#1 / SEC1).
+        #[arg(long, env = "HELIOS_TLS_KEY")]
+        tls_key: Option<PathBuf>,
+        /// Read-only demo mode: the account named by --demo-login can't use any mutating
+        /// API or agent write-tool (every other user is unaffected). Ingest and agent chat
+        /// stay open. Also enabled by a truthy HELIOS_DEMO_MODE (1/true/yes/on).
+        #[arg(long)]
+        demo: bool,
+        /// Demo login to pre-fill on the sign-in page (the account must already exist).
+        #[arg(long, env = "HELIOS_DEMO_LOGIN")]
+        demo_login: Option<String>,
+        /// Demo password to pre-fill alongside `--demo-login` (advertised to the public
+        /// pre-login page — only use a throwaway demo account).
+        #[arg(long, env = "HELIOS_DEMO_PASSWORD")]
+        demo_password: Option<String>,
     },
+}
+
+/// Truthy test for a boolean env-var toggle: `1/true/yes/on` (case-insensitive);
+/// unset or anything else is false.
+fn env_flag(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on" | "y"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn main() -> Result<()> {
@@ -248,6 +294,12 @@ fn main() -> Result<()> {
             shared_store,
             frontend_dir,
             syslog_port,
+            ssl_port,
+            tls_cert,
+            tls_key,
+            demo,
+            demo_login,
+            demo_password,
         } => {
             if let Some(dir) = &frontend_dir {
                 if !dir.join("index.html").is_file() {
@@ -257,6 +309,10 @@ fn main() -> Result<()> {
                     );
                 }
             }
+            // `--demo` is a flag; also honor a truthy HELIOS_DEMO_MODE env var so it
+            // can be set from a systemd unit / container env (clap's bool+env would
+            // reject `1`). Mirrors the HELIOS_CONTROL_ENCRYPTION env convention.
+            let demo = demo || env_flag("HELIOS_DEMO_MODE");
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(http::serve(
                 cli.data_dir,
@@ -266,6 +322,8 @@ fn main() -> Result<()> {
                 shared_store,
                 cli.verbose,
                 syslog_port,
+                http::TlsArgs::new(ssl_port, tls_cert, tls_key),
+                http::DemoConfig::new(demo, demo_login, demo_password),
             ))
         }
     }

@@ -45,6 +45,7 @@ import type {
     Stats,
     TestWebhookResult,
 } from "./types";
+import { notifyDemoBlocked } from "./events";
 
 // Auth is a signed JWT carried as `Authorization: Bearer`. The active env is
 // a per-browser UI preference appended to every request as `?env=`. Both live
@@ -85,6 +86,24 @@ export async function apiFetch(input: RequestInfo, init?: RequestInit): Promise<
         // Missing / expired / revoked token — drop it and boot back to login.
         clearToken();
         window.dispatchEvent(new CustomEvent("helios-401"));
+    } else if (r.status === 403) {
+        // A write rejected by read-only demo mode carries `demo_mode: true`. Peek a
+        // clone (the caller still reads the original) and surface a global toast.
+        void r
+            .clone()
+            .json()
+            .then((b) => {
+                if (b && b.demo_mode) {
+                    notifyDemoBlocked(
+                        typeof b.error === "string"
+                            ? b.error
+                            : "This is a read-only demo — changes are disabled.",
+                    );
+                }
+            })
+            .catch(() => {
+                /* non-JSON 403 (e.g. plain admin-only) — ignore */
+            });
     }
     return r;
 }
@@ -904,6 +923,8 @@ export type EnvRow = {
     created_at: string;
     // Days to keep this env's day-partitions; absent = global default applies.
     retention_days?: number | null;
+    // Picker display order (ascending); server-assigned, rewritten by reorder.
+    order_index?: number;
 };
 
 // Set or clear (null) an env's retention override.
@@ -929,6 +950,59 @@ export async function listEnvs(includeSystem = false): Promise<EnvRow[]> {
     if (!r.ok) throw new Error(`envs: ${r.status}`);
     const j = await r.json();
     return j.envs ?? [];
+}
+
+// Like `listEnvs` but also returns the admin-set login default (null if unset).
+export async function listEnvsWithDefault(
+    includeSystem = false,
+): Promise<{ envs: EnvRow[]; defaultEnv: string | null }> {
+    const qs = includeSystem ? "?include_system=true" : "";
+    const r = await apiFetch(`/api/envs${qs}`);
+    if (!r.ok) throw new Error(`envs: ${r.status}`);
+    const j = await r.json();
+    return { envs: j.envs ?? [], defaultEnv: j.default_env ?? null };
+}
+
+// Rewrite the env picker order (admin). `names` is the desired order (ascending).
+export async function reorderEnvs(names: string[]): Promise<EnvRow[]> {
+    const r = await apiFetch("/api/admin/env-order", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ names }),
+    });
+    if (!r.ok) {
+        const body = await r.text();
+        let msg = `reorder envs ${r.status}`;
+        try {
+            msg = JSON.parse(body).error ?? msg;
+        } catch {
+            /* ignore */
+        }
+        throw new Error(msg);
+    }
+    const j = await r.json();
+    return j.envs ?? [];
+}
+
+// Set or clear (null) the env auto-selected for newly logged-in users (admin).
+export async function setDefaultEnv(name: string | null): Promise<string | null> {
+    const r = await apiFetch("/api/admin/env-default", {
+        method: name === null ? "DELETE" : "PUT",
+        headers: name === null ? undefined : { "content-type": "application/json" },
+        body: name === null ? undefined : JSON.stringify({ name }),
+    });
+    if (!r.ok) {
+        const body = await r.text();
+        let msg = `set default env ${r.status}`;
+        try {
+            msg = JSON.parse(body).error ?? msg;
+        } catch {
+            /* ignore */
+        }
+        throw new Error(msg);
+    }
+    const j = await r.json();
+    return j.default_env ?? null;
 }
 
 // Active env is a client-side preference (see `getEnv`/`setEnv`); the old
@@ -1034,6 +1108,11 @@ export async function login(input: { login: string; password: string }): Promise
     }
     const j = await r.json();
     setToken(j.token);
+    // First login on a fresh browser adopts the admin-configured default env
+    // (echoed as `active_env`); returning users keep their stored choice.
+    if (localStorage.getItem(ENV_KEY) == null && j.user?.active_env) {
+        setEnv(j.user.active_env);
+    }
     return j.user;
 }
 
@@ -1054,11 +1133,17 @@ export async function logout(): Promise<void> {
 // First-run probe: true while the instance has no users yet, so the SPA shows the
 // setup screen instead of the login form. Also carries the instance theme defaults
 // for the pre-login UI. Raw `fetch` (no token exists at this point).
-export async function getSetupStatus(): Promise<{
+export type SetupStatus = {
     needs_setup: boolean;
     default_appearance?: string;
     default_palette?: string;
-}> {
+    // Read-only demo instance; when set, the UI locks down + pre-fills the login.
+    demo_mode?: boolean;
+    demo_login?: string | null;
+    demo_password?: string | null;
+};
+
+export async function getSetupStatus(): Promise<SetupStatus> {
     try {
         const r = await fetch("/api/auth/setup_status");
         if (!r.ok) return { needs_setup: false };

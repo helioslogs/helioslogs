@@ -48,6 +48,10 @@ pub const KEY_ALERT_WEBHOOK_FORMAT: &str = "alerts.webhook_format";
 /// Per-env override lives on `EnvRow.retention_days`.
 pub const KEY_RETENTION_DEFAULT_DAYS: &str = "retention.default_days";
 
+/// Env auto-selected at login for a browser with no stored preference.
+/// Unset / pointing at a deleted env falls back to `default`.
+pub const KEY_DEFAULT_ENV: &str = "env.default";
+
 // Instance-wide UI theme defaults; users override per-account (User.theme/palette).
 pub const KEY_THEME_DEFAULT_APPEARANCE: &str = "theme.default_appearance";
 pub const KEY_THEME_DEFAULT_PALETTE: &str = "theme.default_palette";

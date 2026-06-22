@@ -81,6 +81,23 @@ export function onInvestigateLog(handler: (prompt: string) => void): () => void 
     return () => window.removeEventListener(INVESTIGATE_LOG_EVENT, wrapped);
 }
 
+// A write API was rejected because the instance is in read-only demo mode.
+// `apiFetch` fires this on a 403 carrying `demo_mode: true`; a global toast shows it.
+const DEMO_BLOCKED_EVENT = "helios-demo-blocked";
+
+export function notifyDemoBlocked(message: string): void {
+    window.dispatchEvent(new CustomEvent(DEMO_BLOCKED_EVENT, { detail: message }));
+}
+
+export function onDemoBlocked(handler: (message: string) => void): () => void {
+    const wrapped = (e: Event) => {
+        const ce = e as CustomEvent<string>;
+        if (typeof ce.detail === "string") handler(ce.detail);
+    };
+    window.addEventListener(DEMO_BLOCKED_EVENT, wrapped);
+    return () => window.removeEventListener(DEMO_BLOCKED_EVENT, wrapped);
+}
+
 // Request to run an AI monitor and watch its execution live in the drawer.
 const RUN_MONITOR_LIVE_EVENT = "helios-run-monitor-live";
 

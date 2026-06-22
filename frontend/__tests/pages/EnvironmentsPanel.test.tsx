@@ -4,39 +4,57 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { listEnvs, createEnv, deleteEnv } = vi.hoisted(() => ({
-    listEnvs: vi.fn(),
-    createEnv: vi.fn(),
-    deleteEnv: vi.fn(),
+const { listEnvsWithDefault, createEnv, deleteEnv, reorderEnvs, setDefaultEnv, setEnvRetention } =
+    vi.hoisted(() => ({
+        listEnvsWithDefault: vi.fn(),
+        createEnv: vi.fn(),
+        deleteEnv: vi.fn(),
+        reorderEnvs: vi.fn(),
+        setDefaultEnv: vi.fn(),
+        setEnvRetention: vi.fn(),
+    }));
+vi.mock("../../src/api/client", () => ({
+    listEnvsWithDefault,
+    createEnv,
+    deleteEnv,
+    reorderEnvs,
+    setDefaultEnv,
+    setEnvRetention,
 }));
-vi.mock("../../src/api/client", () => ({ listEnvs, createEnv, deleteEnv }));
 
 import { EnvironmentsPanel } from "../../src/pages/admin/EnvironmentsPanel";
 
-const env = (name: string) => ({ name, created_at: "2026-01-01T00:00:00Z" });
+const env = (name: string) => ({ name, is_system: false, created_at: "2026-01-01T00:00:00Z" });
+const catalog = (names: string[], defaultEnv: string | null = null) => ({
+    envs: names.map(env),
+    defaultEnv,
+});
 
 beforeEach(() => {
-    listEnvs.mockReset();
+    listEnvsWithDefault.mockReset();
     createEnv.mockReset();
     deleteEnv.mockReset();
+    reorderEnvs.mockReset();
+    setDefaultEnv.mockReset();
+    setEnvRetention.mockReset();
 });
 
 describe("<EnvironmentsPanel>", () => {
     it("shows the empty state when there are no user envs", async () => {
-        listEnvs.mockResolvedValue([]);
+        listEnvsWithDefault.mockResolvedValue(catalog([]));
         render(<EnvironmentsPanel />);
         expect(screen.getByRole("heading", { name: "Environments" })).toBeInTheDocument();
         expect(await screen.findByText(/No user envs/)).toBeInTheDocument();
     });
 
     it("lists the fetched envs", async () => {
-        listEnvs.mockResolvedValue([env("prod"), env("default")]);
+        listEnvsWithDefault.mockResolvedValue(catalog(["prod", "default"]));
         render(<EnvironmentsPanel />);
         expect(await screen.findByText("prod")).toBeInTheDocument();
     });
 
     it("creates an env from the input", async () => {
-        listEnvs.mockResolvedValue([]);
+        listEnvsWithDefault.mockResolvedValue(catalog([]));
         createEnv.mockResolvedValue(env("dev"));
         render(<EnvironmentsPanel />);
         await screen.findByText(/No user envs/);
@@ -46,12 +64,31 @@ describe("<EnvironmentsPanel>", () => {
     });
 
     it("rejects an invalid env name before calling the API", async () => {
-        listEnvs.mockResolvedValue([]);
+        listEnvsWithDefault.mockResolvedValue(catalog([]));
         render(<EnvironmentsPanel />);
         await screen.findByText(/No user envs/);
         await userEvent.type(screen.getByPlaceholderText(/new env name/i), "bad name");
         await userEvent.click(screen.getByRole("button", { name: "Create" }));
         expect(createEnv).not.toHaveBeenCalled();
         expect(screen.getByText(/only letters, digits/i)).toBeInTheDocument();
+    });
+
+    it("marks an env as the default for new users", async () => {
+        listEnvsWithDefault.mockResolvedValue(catalog(["prod", "default"]));
+        setDefaultEnv.mockResolvedValue("prod");
+        render(<EnvironmentsPanel />);
+        await screen.findByText("prod");
+        // Both rows show a "set as default" star; the first is prod's.
+        await userEvent.click(screen.getAllByTitle(/set as default for new users/i)[0]);
+        await waitFor(() => expect(setDefaultEnv).toHaveBeenCalledWith("prod"));
+    });
+
+    it("reorders envs with the move buttons", async () => {
+        listEnvsWithDefault.mockResolvedValue(catalog(["prod", "default"]));
+        reorderEnvs.mockResolvedValue([]);
+        render(<EnvironmentsPanel />);
+        await screen.findByText("prod");
+        await userEvent.click(screen.getByLabelText("Move default up"));
+        await waitFor(() => expect(reorderEnvs).toHaveBeenCalledWith(["default", "prod"]));
     });
 });

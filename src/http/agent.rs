@@ -132,6 +132,8 @@ pub(super) async fn send_message_handler(
         catalog: s.catalog.clone(),
         fields: s.fields,
         control: s.control.clone(),
+        // Withhold write-tools only when the demo account is the one chatting.
+        demo_mode: s.demo.restricts(&principal.userid, &principal.email),
     };
     let user_id = principal.user_id.clone();
     // Always run in the session's active env so tool calls target the right partitions; no URL override.

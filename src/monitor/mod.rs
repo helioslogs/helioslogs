@@ -273,6 +273,7 @@ pub async fn run_ai_monitor_into(
         catalog: catalog.clone(),
         fields: *fields,
         control: control.clone(),
+        demo_mode: false,
     };
     let mode = ToolMode::MonitorRun {
         monitor_id: m.id.clone(),

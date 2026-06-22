@@ -1,6 +1,6 @@
 [package]
 name = "helioslogs"
-version = "1.0.0"
+version = "1.0.2"
 edition = "2021"
 # Floor imposed by the aws-sdk/smithy crates (they require rustc 1.91.1). Toolchains
 # older than this fail fast with a clear message instead of per-crate errors.
@@ -26,6 +26,10 @@ base64 = "0.22"
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "tls12", "logging"] }
+# Native HTTPS on `--ssl-port`. `tls-rustls-no-provider` reuses the process-wide
+# aws-lc-rs provider we install (crypto::tls), instead of pulling ring.
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+rustls-pemfile = "2"
 tokio-stream = "0.1"
 async-trait = "0.1"
 futures = "0.3"
