@@ -102,6 +102,26 @@ pub struct DemoConfig {
     pub password: Option<String>,
 }
 
+/// HTTPS listener config (`--ssl-port` / `--tls-cert` / `--tls-key`). When `ssl_port`
+/// is set the cert + key are required, and HTTPS is served alongside the plaintext
+/// `--port` (set `--port 0` for HTTPS-only).
+#[derive(Clone, Default)]
+pub struct TlsArgs {
+    pub ssl_port: Option<u16>,
+    pub cert: Option<PathBuf>,
+    pub key: Option<PathBuf>,
+}
+
+impl TlsArgs {
+    pub fn new(ssl_port: Option<u16>, cert: Option<PathBuf>, key: Option<PathBuf>) -> Self {
+        Self {
+            ssl_port,
+            cert,
+            key,
+        }
+    }
+}
+
 impl DemoConfig {
     pub fn new(enabled: bool, login: Option<String>, password: Option<String>) -> Self {
         let clean = |s: Option<String>| s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
@@ -131,11 +151,33 @@ pub async fn serve(
     shared_store: Option<String>,
     verbose: bool,
     syslog_port: Option<u16>,
+    tls: TlsArgs,
     demo: DemoConfig,
 ) -> Result<()> {
     // Install the aws-lc-rs rustls provider before any HTTPS client (LLM, S3)
     // is built — our reqwest clients are compiled `-no-provider` and use it.
+    // The HTTPS listener (below) shares this same process-wide provider.
     crate::crypto::tls::install_default_provider();
+
+    // Resolve the optional HTTPS listener up-front so a bad cert/key fails fast,
+    // before any heavy startup. `--ssl-port` requires both cert and key.
+    let tls_server: Option<(u16, Arc<rustls::ServerConfig>)> = match tls.ssl_port {
+        Some(ssl_port) => {
+            let cert = tls
+                .cert
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--ssl-port requires --tls-cert"))?;
+            let key = tls
+                .key
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--ssl-port requires --tls-key"))?;
+            Some((ssl_port, crate::crypto::tls::load_server_config(cert, key)?))
+        }
+        None => None,
+    };
+    if port == 0 && tls_server.is_none() {
+        anyhow::bail!("nothing to serve: --port is 0 and --ssl-port is unset");
+    }
 
     // Control plane: encrypted JSON files on the shared store or local data dir. Encryption
     // is on unless HELIOS_CONTROL_ENCRYPTION is falsey; the key lives in its own file.
@@ -350,6 +392,7 @@ pub async fn serve(
         app,
         &host,
         port,
+        tls_server,
         &engine_summary,
         block_store_desc.as_deref(),
     )
@@ -680,14 +723,22 @@ async fn bind_and_serve(
     app: Router,
     host: &str,
     port: u16,
+    tls: Option<(u16, Arc<rustls::ServerConfig>)>,
     engine_summary: &str,
     block_store_desc: Option<&str>,
 ) -> Result<()> {
     let ip: std::net::IpAddr = host
         .parse()
         .with_context(|| format!("invalid --host bind address: {host}"))?;
-    let addr = SocketAddr::new(ip, port);
-    println!("helioslogs serving on http://{addr}");
+    if port != 0 {
+        println!("helioslogs serving on http://{}", SocketAddr::new(ip, port));
+    }
+    if let Some((ssl_port, _)) = &tls {
+        println!(
+            "helioslogs serving on https://{}",
+            SocketAddr::new(ip, *ssl_port)
+        );
+    }
     println!("  engine: {engine_summary}");
     if let Some(desc) = block_store_desc {
         println!("  block store: {desc}");
@@ -714,8 +765,32 @@ async fn bind_and_serve(
     println!("  DELETE /api/admin/users/:id   POST /api/admin/users/:id/password");
     println!("  POST /mcp                     (Model Context Protocol — JSON-RPC over HTTP)");
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // Serve HTTP (plaintext) and/or HTTPS (TLS) concurrently. A disabled listener
+    // parks on `pending` so the other drives the process; `serve` guarantees at
+    // least one is active. The first to exit/error ends the process.
+    let http_app = app.clone();
+    let http = async move {
+        if port == 0 {
+            return std::future::pending::<std::io::Result<()>>().await;
+        }
+        let listener = tokio::net::TcpListener::bind(SocketAddr::new(ip, port)).await?;
+        axum::serve(listener, http_app).await
+    };
+    let https = async move {
+        match tls {
+            Some((ssl_port, config)) => {
+                let cfg = axum_server::tls_rustls::RustlsConfig::from_config(config);
+                axum_server::bind_rustls(SocketAddr::new(ip, ssl_port), cfg)
+                    .serve(app.into_make_service())
+                    .await
+            }
+            None => std::future::pending::<std::io::Result<()>>().await,
+        }
+    };
+    tokio::select! {
+        r = http => r?,
+        r = https => r?,
+    }
     Ok(())
 }
 

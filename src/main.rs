@@ -91,8 +91,13 @@ First-run admin bootstrap (serve; a set password skips the setup screen):
   HELIOS_ADMIN_EMAIL              Admin email [default: <user>@localhost]
   HELIOS_ADMIN_RESET              Break-glass: reset the admin password on boot (truthy)
 
+TLS / HTTPS (serve):
+  HELIOS_SSL_PORT                 HTTPS listen port (needs HELIOS_TLS_CERT + HELIOS_TLS_KEY)
+  HELIOS_TLS_CERT                 PEM certificate-chain file for the HTTPS listener
+  HELIOS_TLS_KEY                  PEM private-key file for the HTTPS listener
+
 Demo mode (serve):
-  HELIOS_DEMO_MODE                Read-only demo: reject all mutating APIs for every user (truthy)
+  HELIOS_DEMO_MODE                Read-only demo for the demo account only (truthy)
   HELIOS_DEMO_LOGIN               Demo account login pre-filled on the sign-in page
   HELIOS_DEMO_PASSWORD            Demo account password pre-filled on the sign-in page
 
@@ -154,6 +159,16 @@ enum Cmd {
         /// for running several instances on one host. `0` disables the listener.
         #[arg(long, env = "HELIOS_SYSLOG_PORT")]
         syslog_port: Option<u16>,
+        /// HTTPS listen port. Requires --tls-cert and --tls-key; served alongside the
+        /// plaintext --port (set --port 0 for HTTPS only).
+        #[arg(long, env = "HELIOS_SSL_PORT")]
+        ssl_port: Option<u16>,
+        /// PEM certificate chain file for --ssl-port.
+        #[arg(long, env = "HELIOS_TLS_CERT")]
+        tls_cert: Option<PathBuf>,
+        /// PEM private-key file for --ssl-port (PKCS#8 / PKCS#1 / SEC1).
+        #[arg(long, env = "HELIOS_TLS_KEY")]
+        tls_key: Option<PathBuf>,
         /// Read-only demo mode: reject every mutating API (saved searches, monitors,
         /// dashboards, users, settings, admin actions) for ALL users. Ingest and agent
         /// chat stay open; agent/MCP write-tools are disabled too.
@@ -265,6 +280,9 @@ fn main() -> Result<()> {
             shared_store,
             frontend_dir,
             syslog_port,
+            ssl_port,
+            tls_cert,
+            tls_key,
             demo,
             demo_login,
             demo_password,
@@ -286,6 +304,7 @@ fn main() -> Result<()> {
                 shared_store,
                 cli.verbose,
                 syslog_port,
+                http::TlsArgs::new(ssl_port, tls_cert, tls_key),
                 http::DemoConfig::new(demo, demo_login, demo_password),
             ))
         }
