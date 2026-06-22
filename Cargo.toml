@@ -1,6 +1,6 @@
 [package]
 name = "helioslogs"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 # Floor imposed by the aws-sdk/smithy crates (they require rustc 1.91.1). Toolchains
 # older than this fail fast with a clear message instead of per-crate errors.
