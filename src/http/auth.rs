@@ -677,15 +677,21 @@ fn bad_request(msg: &str) -> Response {
     (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
 }
 
-/// True for a mutating request that demo mode rejects. Agent chat (`/api/agent/`)
-/// and auth (`/api/auth/`, e.g. logout) stay open; ingest is public and already
-/// returned earlier. Read methods (GET/HEAD/OPTIONS) are always allowed.
+/// True for a mutating request that demo mode rejects. Agent chat (`/api/agent/`),
+/// auth (`/api/auth/`, e.g. logout), and alert dismiss/ack stay open; ingest is
+/// public and already returned earlier. Read methods (GET/HEAD/OPTIONS) are always allowed.
 fn is_demo_blocked_write(method: &axum::http::Method, path: &str) -> bool {
     use axum::http::Method;
     if !matches!(
         *method,
         Method::POST | Method::PUT | Method::PATCH | Method::DELETE
     ) {
+        return false;
+    }
+    // Dismissing/acking alerts stays open even for the demo account.
+    if (*method == Method::POST && path == "/api/alerts/dismiss-all")
+        || (*method == Method::PATCH && path.starts_with("/api/alerts/"))
+    {
         return false;
     }
     !(path.starts_with("/api/agent/") || path.starts_with("/api/auth/"))
