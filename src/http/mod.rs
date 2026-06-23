@@ -2228,6 +2228,33 @@ mod integration_tests {
         .await;
         assert_ne!(s_logout, StatusCode::FORBIDDEN, "logout must not be gated");
 
+        // Dismissing/acking alerts stays open even for the demo account.
+        let (s_dismiss, _) = send(
+            &c.app,
+            req("POST", "/api/alerts/dismiss-all", Some(&demo_tok), None),
+        )
+        .await;
+        assert_ne!(
+            s_dismiss,
+            StatusCode::FORBIDDEN,
+            "alert dismiss-all must not be gated"
+        );
+        let (s_ack, _) = send(
+            &c.app,
+            req(
+                "PATCH",
+                "/api/alerts/alt_x",
+                Some(&demo_tok),
+                Some(json!({ "acknowledged": true })),
+            ),
+        )
+        .await;
+        assert_ne!(
+            s_ack,
+            StatusCode::FORBIDDEN,
+            "alert ack/patch must not be gated"
+        );
+
         // A DIFFERENT user writes freely even with demo mode on.
         let (s_other, other) = send(
             &c.app,
