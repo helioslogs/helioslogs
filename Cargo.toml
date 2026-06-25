@@ -8,7 +8,10 @@ rust-version = "1.91.1"
 description = "HeliosLogs is a fast, easy, modern log search engine with analytics & AI"
 license = "AGPL-3.0-only OR LicenseRef-Appbird-Commercial"
 repository = "https://github.com/helioslogs/helioslogs"
+readme = "crates-io.md"
 authors = ["Appbird LLC <helioslogs@appbird.com>"]
+keywords = ["logs", "search", "observability", "logging", "ai", "mcp"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
