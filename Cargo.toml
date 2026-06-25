@@ -10,7 +10,7 @@ license = "AGPL-3.0-only OR LicenseRef-Appbird-Commercial"
 repository = "https://github.com/helioslogs/helioslogs"
 readme = "crates-io.md"
 authors = ["Appbird LLC <helioslogs@appbird.com>"]
-keywords = ["logs", "search", "observability", "logging", "ai", "mcp"]
+keywords = ["logs", "search", "observability", "ai", "mcp"]
 categories = ["command-line-utilities"]
 
 [dependencies]
