@@ -17,7 +17,7 @@ HeliosLogs is a modern log search tool with analytics & AI.
 Several options to get started. Full walkthrough:
 [Quickstart docs](https://docs.helioslogs.com/start/quickstart).
 
-**Native install (macOS / Linux)** — detects your OS and installs the native package:
+**Native install (Linuxs / macOS)** — detects your OS and installs the native package:
 
 ```bash
 curl -fsSL https://www.helioslogs.com/install.sh | sh
@@ -35,6 +35,15 @@ docker run -p 7300:7300 \
   helioslogs/helioslogs:latest
 
 #  listening on http://localhost:7300
+```
+
+**Homebrew (macOS)** — install from the HeliosLogs tap, then run the formula:
+
+```bash
+brew install helioslogs/tap/helioslogs
+
+helioslogs serve --port 7300 --data-dir ./data
+#  listening on http://127.0.0.1:7300
 ```
 
 ## Build from source
