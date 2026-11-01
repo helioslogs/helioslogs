@@ -833,6 +833,10 @@ pub(super) async fn gc_handler(State(s): State<AppState>) -> impl IntoResponse {
                 "partitions_dropped": r.partitions_dropped,
                 "blocks_deleted": r.blocks_deleted,
                 "deleted_files": r.blocks_deleted,
+                "tombstones_reaped": r.tombstones_reaped,
+                "alerts_deleted": r.alerts_deleted,
+                "monitor_runs_deleted": r.monitor_runs_deleted,
+                "chats_deleted": r.chats_deleted,
                 "took_ms": t0.elapsed().as_millis() as u64,
                 "message": if r.partitions_dropped == 0 {
                     "no partitions past retention (block files themselves are reclaimed by compaction)".to_string()

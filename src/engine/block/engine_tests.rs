@@ -806,3 +806,124 @@ fn field_catalog_from_footers() {
     assert!(find("message").is_none());
     assert!(find("timestamp").is_none());
 }
+
+/// Fs store without `list_dirs`, forcing the flat partition listing.
+struct FlatOnly(super::objstore::FsObjectStore);
+
+impl super::objstore::ObjectStore for FlatOnly {
+    fn get(&self, key: &str) -> anyhow::Result<Vec<u8>> {
+        self.0.get(key)
+    }
+    fn put(&self, key: &str, bytes: &[u8]) -> anyhow::Result<()> {
+        self.0.put(key, bytes)
+    }
+    fn put_if_absent(&self, key: &str, bytes: &[u8]) -> anyhow::Result<bool> {
+        self.0.put_if_absent(key, bytes)
+    }
+    fn delete(&self, key: &str) -> anyhow::Result<()> {
+        self.0.delete(key)
+    }
+    fn list(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
+        self.0.list(prefix)
+    }
+    fn size(&self, key: &str) -> anyhow::Result<Option<u64>> {
+        self.0.size(key)
+    }
+    fn describe(&self) -> String {
+        "flat-only".into()
+    }
+}
+
+#[test]
+fn shallow_partition_listing_matches_flat() {
+    let dir = TempDir::new().unwrap();
+    let store = BlockStore::new(dir.path());
+    let d = |s: &str| s.parse::<NaiveDate>().unwrap();
+    let live = [
+        PartitionKey::new("prod", "api", d("2026-01-01")),
+        PartitionKey::new("default", "web", d("2026-01-02")),
+        PartitionKey::new("default", "web", d("2026-01-01")),
+    ];
+    for k in &live {
+        store.append_block(k, &one_row_block(1, "x")).unwrap();
+    }
+    let tomb = PartitionKey::new("default", "web", d("2026-01-03"));
+    store.swap_blocks(&tomb, &[], &[]).unwrap();
+    let root = dir.path();
+    let write = |rel: &str, body: &str| {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    };
+    write("legacy/idx/2026-01-04/manifest.json", r#"{"blocks":[]}"#);
+    write("default/web/2026-01-05/blocks/x.hb", "x");
+    write("_control/alerts/a.json", "{}");
+    write("_control/conversations/u1/c.json", "{}");
+    write("default/web/not-a-day/manifest.json", "{}");
+    write("stray.txt", "x");
+
+    let shallow = store.list_partitions().unwrap();
+    let flat = BlockStore::with_object_store(std::sync::Arc::new(FlatOnly(
+        super::objstore::FsObjectStore::new(root),
+    )))
+    .list_partitions()
+    .unwrap();
+    assert_eq!(shallow, flat);
+    let expected = vec![
+        PartitionKey::new("default", "web", d("2026-01-01")),
+        PartitionKey::new("default", "web", d("2026-01-02")),
+        tomb,
+        PartitionKey::new("legacy", "idx", d("2026-01-04")),
+        PartitionKey::new("prod", "api", d("2026-01-01")),
+    ];
+    assert_eq!(shallow, expected);
+}
+
+#[test]
+fn orphan_gc_spares_live_and_young_blocks() {
+    let dir = TempDir::new().unwrap();
+    let store = BlockStore::new(dir.path());
+    let k = key();
+    let live = store.append_block(&k, &one_row_block(1, "live")).unwrap();
+    store
+        .put_block(&k, "orphan", &one_row_block(2, "gone"))
+        .unwrap();
+    let blocks = dir.path().join("default/orders/2026-05-30/blocks");
+    std::fs::write(blocks.join("half.tmp.123"), b"partial").unwrap();
+
+    let hour = std::time::Duration::from_secs(3600);
+    assert_eq!(store.gc_orphan_blocks(&k, hour).unwrap(), 0, "too young");
+    assert_eq!(std::fs::read_dir(&blocks).unwrap().count(), 3);
+
+    assert_eq!(
+        store
+            .gc_orphan_blocks(&k, std::time::Duration::ZERO)
+            .unwrap(),
+        2
+    );
+    assert!(store.block_size(&k, &live).is_some());
+    assert!(store.block_size(&k, "orphan").is_none());
+    assert!(!blocks.join("half.tmp.123").exists());
+    assert_eq!(store.load_manifest(&k).unwrap().blocks, vec![live]);
+}
+
+#[test]
+fn purge_partition_and_root_guard() {
+    use super::objstore::{FsObjectStore, ObjectStore};
+    let dir = TempDir::new().unwrap();
+    let store = BlockStore::new(dir.path());
+    let k = key();
+    store.append_block(&k, &one_row_block(1, "x")).unwrap();
+    let other = PartitionKey::new("default", "orders", day().succ_opt().unwrap());
+    store.append_block(&other, &one_row_block(1, "y")).unwrap();
+
+    store.purge_partition(&k).unwrap();
+    assert!(!store.partition_exists(&k));
+    assert!(store.partition_exists(&other));
+    store.purge_partition(&k).unwrap();
+
+    let fs = FsObjectStore::new(dir.path());
+    assert!(fs.delete_prefix("").is_err());
+    assert!(fs.delete_prefix("/").is_err());
+    assert!(store.partition_exists(&other));
+}

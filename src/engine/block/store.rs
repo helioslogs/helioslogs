@@ -4,8 +4,10 @@
 //! plus write-once `.hb` blocks. Manifest commits are lock-free multi-writer via
 //! CAS — write gen `N+1` with `put_if_absent`, reload and retry if a peer won.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -183,9 +185,42 @@ impl BlockStore {
         self.store.size(&Self::block_key(key, id)).ok().flatten()
     }
 
-    /// Delete a block object. Best-effort.
+    /// Delete a block object. Best-effort; failures are logged.
     pub fn delete_block(&self, key: &PartitionKey, id: &str) {
-        let _ = self.store.delete(&Self::block_key(key, id));
+        if let Err(e) = self.store.delete(&Self::block_key(key, id)) {
+            tracing::warn!(block = %id, partition = %Self::partition_prefix(key), "block delete failed: {e:#}");
+        }
+    }
+
+    /// Delete unreferenced block objects older than `min_age` (crash leftovers).
+    pub fn gc_orphan_blocks(&self, key: &PartitionKey, min_age: Duration) -> Result<usize> {
+        let live: HashSet<String> = self.load_manifest(key)?.blocks.into_iter().collect();
+        let now = SystemTime::now();
+        let mut deleted = 0;
+        for k in self
+            .store
+            .list(&format!("{}/blocks/", Self::partition_prefix(key)))?
+        {
+            let name = Self::basename(&k);
+            if live.contains(name.strip_suffix(".hb").unwrap_or(name)) {
+                continue;
+            }
+            let Some(mtime) = self.store.modified(&k)? else {
+                continue;
+            };
+            if now.duration_since(mtime).unwrap_or_default() < min_age {
+                continue;
+            }
+            self.store.delete(&k)?;
+            deleted += 1;
+        }
+        Ok(deleted)
+    }
+
+    /// Remove every object of a partition, manifests included.
+    pub fn purge_partition(&self, key: &PartitionKey) -> Result<()> {
+        self.store
+            .delete_prefix(&format!("{}/", Self::partition_prefix(key)))
     }
 
     pub fn read_block(&self, key: &PartitionKey, id: &str) -> Result<Vec<u8>> {
@@ -358,9 +393,49 @@ impl BlockStore {
         Ok(self.store.size(&Self::legacy_manifest_key(key))?.is_some())
     }
 
-    /// Discover all partitions by listing manifest keys and parsing their
-    /// `<env>/<index>/<day>/manifest...` prefix — works over a shared store (NFS/S3).
+    /// All partitions with a manifest, sorted by `(env, index, day)`.
     pub fn list_partitions(&self) -> Result<Vec<PartitionKey>> {
+        match self.list_partitions_shallow()? {
+            Some(keys) => Ok(keys),
+            None => self.list_partitions_flat(),
+        }
+    }
+
+    /// Walk only `env/index/day` dirs, never `blocks/`.
+    fn list_partitions_shallow(&self) -> Result<Option<Vec<PartitionKey>>> {
+        let Some(mut envs) = self.store.list_dirs("")? else {
+            return Ok(None);
+        };
+        envs.sort();
+        let mut out = Vec::new();
+        for env in envs {
+            let mut indexes = self
+                .store
+                .list_dirs(&format!("{env}/"))?
+                .unwrap_or_default();
+            indexes.sort();
+            for index in indexes {
+                let mut days: Vec<chrono::NaiveDate> = self
+                    .store
+                    .list_dirs(&format!("{env}/{index}/"))?
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                    .collect();
+                days.sort();
+                for day in days {
+                    let key = PartitionKey::new(env.clone(), index.clone(), day);
+                    if self.has_manifest(&key)? {
+                        out.push(key);
+                    }
+                }
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// Flat key listing filtered to manifests (object stores).
+    fn list_partitions_flat(&self) -> Result<Vec<PartitionKey>> {
         use std::collections::BTreeSet;
         let mut set: BTreeSet<(String, String, chrono::NaiveDate)> = BTreeSet::new();
         for k in self.store.list("")? {
