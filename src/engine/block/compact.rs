@@ -5,6 +5,7 @@
 //! aborts safely (the [`CompactionGate`] only avoids wasted work, not races).
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -43,6 +44,12 @@ pub struct CompactionStats {
 }
 
 const MIN_SMALL_BLOCKS: usize = 4;
+
+/// How often the compactor sweeps unreferenced block objects.
+const ORPHAN_GC_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// Min age before an unreferenced block is GC'd (younger ones may be in flight).
+const ORPHAN_MIN_AGE: Duration = Duration::from_secs(24 * 3600);
 
 /// Greedily pack `(id, size)` into groups, sealing each once cumulative size reaches
 /// `target` (trailing remainder is its own group). Time order and sizes are preserved.
@@ -146,6 +153,7 @@ pub fn compact_partition(
 /// Background compactor: every interval, walk `store`'s partitions and compact those
 /// with enough small blocks. Sequential `spawn_blocking`, so two never race a partition.
 pub async fn run_compactor(store: BlockStore, codec: Codec, gate: Arc<dyn CompactionGate>) {
+    let mut last_gc: Option<Instant> = None;
     loop {
         // Re-read each pass so Admin → General edits apply without a restart.
         tokio::time::sleep(crate::runtime_config::block_compact_interval()).await;
@@ -171,7 +179,7 @@ pub async fn run_compactor(store: BlockStore, codec: Codec, gate: Arc<dyn Compac
             }
             Err(_) => continue,
         };
-        for key in partitions {
+        for key in partitions.iter().cloned() {
             let store = store.clone();
             let label = format!("{}/{}", key.index, key.day_string());
             let res = tokio::task::spawn_blocking(move || {
@@ -198,6 +206,31 @@ pub async fn run_compactor(store: BlockStore, codec: Codec, gate: Arc<dyn Compac
                 Ok(Err(e)) => tracing::warn!(partition = %label, "block compaction failed: {e}"),
                 Err(e) => tracing::warn!(partition = %label, "block compaction join error: {e}"),
             }
+        }
+
+        if last_gc.is_some_and(|t| t.elapsed() < ORPHAN_GC_INTERVAL) {
+            continue;
+        }
+        last_gc = Some(Instant::now());
+        let store = store.clone();
+        let deleted = tokio::task::spawn_blocking(move || {
+            partitions
+                .iter()
+                .map(|key| {
+                    store
+                        .gc_orphan_blocks(key, ORPHAN_MIN_AGE)
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(partition = %format!("{}/{}", key.index, key.day_string()),
+                                "orphan block gc failed: {e:#}");
+                            0
+                        })
+                })
+                .sum::<usize>()
+        })
+        .await
+        .unwrap_or(0);
+        if deleted > 0 {
+            tracing::info!(deleted, "block compaction: removed orphaned blocks");
         }
     }
 }

@@ -119,7 +119,7 @@ pub struct Monitor {
     pub last_run_at: Option<i64>,
     pub last_status: Option<String>,
     pub last_error: Option<String>,
-    /// Conversation id of the last run's trace (`conv_*`), for click-into-trace
+    /// Conversation id of the last run's trace (`run_*`), for click-into-trace
     /// from the alert inbox. Always null for threshold monitors (no agent run).
     pub last_conversation_id: Option<String>,
     /// Threshold monitors only — whether the last evaluation was breaching.

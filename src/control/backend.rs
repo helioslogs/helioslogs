@@ -21,6 +21,8 @@ use super::store::{CasResult, ControlStore, Version};
 const SCHEMA_VERSION: u32 = 1;
 /// CAS retry ceiling — a safety bound; real contention is a few writes/day.
 const MAX_CAS_RETRIES: usize = 16;
+/// Control-store reads/deletes in flight at once during bulk operations.
+const IO_CONCURRENCY: usize = 16;
 
 /// A decrypted single-document snapshot held for `cache_ttl`. `value` is the
 /// plaintext bytes, or `None` when the document is absent (negative cache).
@@ -219,17 +221,36 @@ impl JsonBackend {
     /// (a corrupt entity shouldn't sink the list). Store key order; callers sort.
     async fn list_entities<T: DeserializeOwned>(&self, prefix: &str) -> Result<Vec<T>> {
         let keys = self.list_keys(prefix).await?;
+        Ok(self.read_entities(&keys).await)
+    }
+
+    /// Read `keys` concurrently, in key order, skipping missing or unreadable ones.
+    async fn read_entities<T: DeserializeOwned>(&self, keys: &[String]) -> Vec<T> {
         let mut out = Vec::with_capacity(keys.len());
-        for key in keys {
-            match self.read_doc::<T>(&key).await {
-                Ok(Some((v, _))) => out.push(v),
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(key = %key, error = %e, "control: skipping unreadable entity")
+        for chunk in keys.chunks(IO_CONCURRENCY) {
+            let reads =
+                futures::future::join_all(chunk.iter().map(|k| self.read_doc::<T>(k))).await;
+            for (key, res) in chunk.iter().zip(reads) {
+                match res {
+                    Ok(Some((v, _))) => out.push(v),
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(key = %key, error = %e, "control: skipping unreadable entity")
+                    }
                 }
             }
         }
-        Ok(out)
+        out
+    }
+
+    /// Delete `keys` concurrently, failing on the first error.
+    async fn delete_all(&self, keys: &[String]) -> Result<()> {
+        for chunk in keys.chunks(IO_CONCURRENCY) {
+            for res in futures::future::join_all(chunk.iter().map(|k| self.delete(k))).await {
+                res?;
+            }
+        }
+        Ok(())
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
@@ -2527,6 +2548,17 @@ fn conv_prefix(user_id: &str) -> String {
     format!("conversations/{user_id}/")
 }
 
+const CONVERSATIONS_PREFIX: &str = "conversations/";
+
+/// Id prefix of monitor-run conversations (chats use `conv`).
+const MONITOR_RUN_ID_PREFIX: &str = "run";
+
+/// `(id prefix, created millis)` parsed from a conversation key's file name.
+fn conv_key_parts(key: &str) -> Option<(&str, i64)> {
+    let (prefix, rest) = key.rsplit('/').next()?.split_once('_')?;
+    Some((prefix, rest.get(..13)?.parse().ok()?))
+}
+
 impl Control {
     /// Create a chat conversation.
     pub async fn conv_create(&self, user_id: &str, title: &str) -> Result<ConvMeta> {
@@ -2542,7 +2574,7 @@ impl Control {
     ) -> Result<ConvMeta> {
         let now = chrono::Utc::now().timestamp_millis();
         let stored = StoredConversation {
-            id: conv_id(now),
+            id: conv_id(kind, now),
             owner_user_id: user_id.to_string(),
             title: title.to_string(),
             kind: kind.to_string(),
@@ -2560,10 +2592,17 @@ impl Control {
     /// `user_id`'s chat conversations, newest-updated first. Monitor-kind rows
     /// are hidden.
     pub async fn conv_list(&self, user_id: &str) -> Result<Vec<ConvMeta>> {
+        let keys: Vec<String> = self
+            .backend
+            .list_keys(&conv_prefix(user_id))
+            .await?
+            .into_iter()
+            .filter(|k| conv_key_parts(k).is_none_or(|(p, _)| p != MONITOR_RUN_ID_PREFIX))
+            .collect();
         let mut metas: Vec<(i64, ConvMeta)> = self
             .backend
-            .list_entities::<StoredConversation>(&conv_prefix(user_id))
-            .await?
+            .read_entities::<StoredConversation>(&keys)
+            .await
             .into_iter()
             .filter(|c| c.kind == "chat")
             .map(|c| (c.updated_at, c.meta()))
@@ -2609,6 +2648,33 @@ impl Control {
             })
             .await?;
         Ok(true)
+    }
+
+    /// Delete `kind` conversations (`chat` / `monitor`) last updated before `cutoff_ms`. Returns the count.
+    pub async fn conv_purge_before(&self, kind: &str, cutoff_ms: i64) -> Result<usize> {
+        let mut doomed = Vec::new();
+        let mut unclassified = Vec::new();
+        for key in self.backend.list_keys(CONVERSATIONS_PREFIX).await? {
+            match conv_key_parts(&key) {
+                Some((MONITOR_RUN_ID_PREFIX, ms)) if kind == "monitor" && ms < cutoff_ms => {
+                    doomed.push(key)
+                }
+                Some((MONITOR_RUN_ID_PREFIX, _)) => {}
+                Some((_, ms)) if ms >= cutoff_ms => {}
+                _ => unclassified.push(key),
+            }
+        }
+        for c in self
+            .backend
+            .read_entities::<StoredConversation>(&unclassified)
+            .await
+        {
+            if c.kind == kind && c.updated_at < cutoff_ms {
+                doomed.push(conv_key(&c.owner_user_id, &c.id));
+            }
+        }
+        self.backend.delete_all(&doomed).await?;
+        Ok(doomed.len())
     }
 
     pub async fn conv_delete(&self, user_id: &str, conv_id: &str) -> Result<bool> {
@@ -2705,6 +2771,16 @@ fn alert_key(id: &str) -> String {
     format!("alerts/{id}.json")
 }
 
+/// Creation millis encoded in an alert key (`alerts/alt_<13-digit ms>_<hex>.json`).
+fn alert_key_millis(key: &str) -> Option<i64> {
+    key.rsplit('/')
+        .next()?
+        .strip_prefix("alt_")?
+        .get(..13)?
+        .parse()
+        .ok()
+}
+
 impl Control {
     /// Alerts visible to `user_id`, newest first, capped to `limit`. `only_unacked`
     /// = inbox; `search` is a case-insensitive substring; `monitor` restricts to one.
@@ -2719,30 +2795,54 @@ impl Control {
         let needle = search
             .map(|q| q.trim().to_lowercase())
             .filter(|q| !q.is_empty());
-
-        let mut items: Vec<Alert> = self
-            .backend
-            .list_entities::<StoredAlert>(ALERTS_PREFIX)
-            .await?
-            .into_iter()
-            .filter(|st| st.visible_to(user_id))
-            .filter(|st| !only_unacked || !st.alert.acknowledged)
-            .filter(|st| monitor.is_none_or(|m| st.alert.monitor_id == m))
-            .filter(|st| match &needle {
-                None => true,
-                Some(n) => {
-                    let a = &st.alert;
+        let matches = |st: &StoredAlert| {
+            let a = &st.alert;
+            st.visible_to(user_id)
+                && (!only_unacked || !a.acknowledged)
+                && monitor.is_none_or(|m| a.monitor_id == m)
+                && needle.as_ref().is_none_or(|n| {
                     a.title.to_lowercase().contains(n)
                         || a.summary.to_lowercase().contains(n)
                         || a.monitor_name.to_lowercase().contains(n)
                         || a.env.to_lowercase().contains(n)
+                })
+        };
+
+        let mut keys = self.backend.list_keys(ALERTS_PREFIX).await?;
+        keys.sort_unstable_by(|a, b| b.cmp(a));
+        let mut items: Vec<Alert> = Vec::new();
+        for chunk in keys.chunks(IO_CONCURRENCY) {
+            for st in self.backend.read_entities::<StoredAlert>(chunk).await {
+                if matches(&st) {
+                    items.push(st.project(user_id));
                 }
-            })
-            .map(|st| st.project(user_id))
-            .collect();
+            }
+            if items.len() >= limit {
+                break;
+            }
+        }
         items.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         items.truncate(limit);
         Ok(items)
+    }
+
+    /// Delete alerts created before `cutoff_ms` (judged by the id's timestamp). Returns the count.
+    pub async fn alert_purge_before(&self, cutoff_ms: i64) -> Result<usize> {
+        let mut doomed = Vec::new();
+        for key in self.backend.list_keys(ALERTS_PREFIX).await? {
+            let created = match alert_key_millis(&key) {
+                Some(ms) => ms,
+                None => match self.backend.read_entity::<StoredAlert>(&key).await? {
+                    Some(st) => st.alert.created_at,
+                    None => continue,
+                },
+            };
+            if created < cutoff_ms {
+                doomed.push(key);
+            }
+        }
+        self.backend.delete_all(&doomed).await?;
+        Ok(doomed.len())
     }
 
     /// Unacknowledged count (own + public) for the nav badge.
@@ -2761,17 +2861,8 @@ impl Control {
         user_id: &str,
         monitor_id: &str,
     ) -> Result<Vec<Alert>> {
-        let mut items: Vec<Alert> = self
-            .backend
-            .list_entities::<StoredAlert>(ALERTS_PREFIX)
-            .await?
-            .into_iter()
-            .filter(|st| st.alert.monitor_id == monitor_id && st.visible_to(user_id))
-            .map(|st| st.project(user_id))
-            .collect();
-        items.sort_by_key(|b| std::cmp::Reverse(b.created_at));
-        items.truncate(200);
-        Ok(items)
+        self.alert_list(user_id, false, Some(monitor_id), None, 200)
+            .await
     }
 
     /// Recent alert titles for a monitor — fed to the agent so it can dedupe
@@ -2934,10 +3025,17 @@ impl Control {
     }
 }
 
-/// `conv_<zero-padded-millis>_<rand>` — timestamp-prefixed so lexicographic key
-/// order (S3 prefix listing) is chronological order.
-fn conv_id(now_millis: i64) -> String {
-    format!("conv_{now_millis:013}_{:08x}", crate::crypto::rand::u32())
+/// `conv_<millis>_<rand>` (chat) or `run_<millis>_<rand>` (monitor run): kind and age read from the key.
+fn conv_id(kind: &str, now_millis: i64) -> String {
+    let prefix = if kind == "monitor" {
+        MONITOR_RUN_ID_PREFIX
+    } else {
+        "conv"
+    };
+    format!(
+        "{prefix}_{now_millis:013}_{:08x}",
+        crate::crypto::rand::u32()
+    )
 }
 
 /// `<prefix>_{micros_hex}{rand_hex}` — time-ordered + collision-resistant at the
@@ -3829,6 +3927,7 @@ mod tests {
             .conv_create_with_kind("alice", "run trace", "monitor")
             .await
             .unwrap();
+        assert!(mon.id.starts_with("run_"));
 
         let list = c.conv_list("alice").await.unwrap();
         assert_eq!(list.len(), 1);
@@ -4142,5 +4241,180 @@ mod tests {
         assert_eq!(n(false, Some(m1.id.as_str()), Some("cpu"), 100).await, 1);
         // No match.
         assert_eq!(n(false, None, Some("nonsense"), 100).await, 0);
+    }
+
+    #[tokio::test]
+    async fn alert_list_newest_first_across_read_batches() {
+        let dir = TempDir::new().unwrap();
+        let c = control(&dir);
+        for i in 0..(IO_CONCURRENCY * 2 + 3) {
+            c.alert_create_manual(
+                "alice",
+                ManualAlertInput {
+                    title: format!("a{i}"),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let all = c.alert_list("alice", false, None, None, 500).await.unwrap();
+        assert_eq!(all.len(), IO_CONCURRENCY * 2 + 3);
+        assert!(all.windows(2).all(|w| w[0].created_at >= w[1].created_at));
+        let top = c.alert_list("alice", false, None, None, 5).await.unwrap();
+        let ids = |v: &[Alert]| v.iter().map(|a| a.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&top), ids(&all[..5]));
+        assert!(c
+            .alert_list("bob", false, None, None, 5)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn monitor_run_purge_keeps_chats_and_fresh_runs() {
+        let dir = TempDir::new().unwrap();
+        let c = control(&dir);
+        let chat = c.conv_create("alice", "fresh chat").await.unwrap();
+        let run = c
+            .conv_create_with_kind("alice", "fresh run", "monitor")
+            .await
+            .unwrap();
+        for (id, kind) in [
+            ("run_0000000001000_aaaaaaaa", "monitor"),
+            ("conv_0000000001000_bbbbbbbb", "monitor"),
+            ("conv_0000000001000_cccccccc", "chat"),
+        ] {
+            let st = StoredConversation {
+                id: id.into(),
+                owner_user_id: "alice".into(),
+                title: id.into(),
+                kind: kind.into(),
+                created_at: 1000,
+                updated_at: 1000,
+                turns: Vec::new(),
+            };
+            c.backend
+                .put_doc(&conv_key("alice", id), &st)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            conv_key_parts("conversations/alice/run_0000000001000_aaaaaaaa.json"),
+            Some(("run", 1000))
+        );
+
+        let cutoff = chrono::Utc::now().timestamp_millis() - 86_400_000;
+        assert_eq!(c.conv_purge_before("monitor", cutoff).await.unwrap(), 2);
+        assert!(c
+            .conv_get("alice", "run_0000000001000_aaaaaaaa")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(c
+            .conv_get("alice", "conv_0000000001000_bbbbbbbb")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(c.conv_get("alice", &run.id).await.unwrap().is_some());
+        let chats: Vec<String> = c
+            .conv_list("alice")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(
+            chats,
+            vec![chat.id, "conv_0000000001000_cccccccc".to_string()]
+        );
+        assert_eq!(c.conv_purge_before("monitor", cutoff).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn chat_purge_uses_last_activity_and_skips_runs() {
+        let dir = TempDir::new().unwrap();
+        let c = control(&dir);
+        let now = chrono::Utc::now().timestamp_millis();
+        for (id, kind, updated_at) in [
+            ("conv_0000000001000_aaaaaaaa", "chat", 1000),
+            ("conv_0000000001000_bbbbbbbb", "chat", now),
+            ("run_0000000001000_cccccccc", "monitor", 1000),
+            ("conv_0000000001000_dddddddd", "monitor", 1000),
+        ] {
+            let st = StoredConversation {
+                id: id.into(),
+                owner_user_id: "alice".into(),
+                title: id.into(),
+                kind: kind.into(),
+                created_at: 1000,
+                updated_at,
+                turns: Vec::new(),
+            };
+            c.backend
+                .put_doc(&conv_key("alice", id), &st)
+                .await
+                .unwrap();
+        }
+        let fresh = c.conv_create("bob", "fresh").await.unwrap();
+
+        let cutoff = now - 86_400_000;
+        assert_eq!(c.conv_purge_before("chat", cutoff).await.unwrap(), 1);
+        let left = |u: &'static str| {
+            let c = &c;
+            async move {
+                let mut ids = c.backend.list_keys(&conv_prefix(u)).await.unwrap();
+                ids.sort();
+                ids
+            }
+        };
+        assert_eq!(
+            left("alice").await,
+            vec![
+                conv_key("alice", "conv_0000000001000_bbbbbbbb"),
+                conv_key("alice", "conv_0000000001000_dddddddd"),
+                conv_key("alice", "run_0000000001000_cccccccc"),
+            ]
+        );
+        assert_eq!(left("bob").await, vec![conv_key("bob", &fresh.id)]);
+    }
+
+    #[tokio::test]
+    async fn alert_purge_before_uses_id_timestamp() {
+        let dir = TempDir::new().unwrap();
+        let c = control(&dir);
+        let fresh = c
+            .alert_create_manual(
+                "alice",
+                ManualAlertInput {
+                    title: "fresh".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        for id in ["alt_0000000001000_deadbeef", "legacy-id"] {
+            let mut old = fresh.clone();
+            old.id = id.into();
+            old.created_at = 1000;
+            let st = StoredAlert {
+                alert: old,
+                owner_user_id: "alice".into(),
+                dismissed_by: Vec::new(),
+            };
+            c.backend.put_doc(&alert_key(id), &st).await.unwrap();
+        }
+        assert_eq!(
+            alert_key_millis("alerts/alt_0000000001000_deadbeef.json"),
+            Some(1000)
+        );
+        assert_eq!(alert_key_millis("alerts/legacy-id.json"), None);
+
+        assert_eq!(c.alert_purge_before(0).await.unwrap(), 0);
+        let cutoff = chrono::Utc::now().timestamp_millis() - 86_400_000;
+        assert_eq!(c.alert_purge_before(cutoff).await.unwrap(), 2);
+        let left = c.alert_list("alice", false, None, None, 100).await.unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, fresh.id);
     }
 }

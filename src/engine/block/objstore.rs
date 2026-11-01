@@ -8,6 +8,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use anyhow::{anyhow, bail, Context, Result};
 use uuid::Uuid;
@@ -40,6 +41,24 @@ pub trait ObjectStore: Send + Sync {
     fn list(&self, prefix: &str) -> Result<Vec<String>>;
     /// Object size in bytes, or `None` if absent.
     fn size(&self, key: &str) -> Result<Option<u64>>;
+    /// Last-modified time, or `None` if absent/unknown.
+    fn modified(&self, _key: &str) -> Result<Option<SystemTime>> {
+        Ok(None)
+    }
+    /// Child dir names of `prefix`; `None` = not cheap here, use `list`.
+    fn list_dirs(&self, _prefix: &str) -> Result<Option<Vec<String>>> {
+        Ok(None)
+    }
+    /// Delete every object under a non-empty `prefix`.
+    fn delete_prefix(&self, prefix: &str) -> Result<()> {
+        if prefix.trim_matches('/').is_empty() {
+            bail!("refusing to delete the store root");
+        }
+        for k in self.list(prefix)? {
+            self.delete(&k)?;
+        }
+        Ok(())
+    }
     /// Human-readable description for startup logging.
     fn describe(&self) -> String;
 }
@@ -135,6 +154,42 @@ impl ObjectStore for FsObjectStore {
             Ok(m) => Ok(Some(m.len())),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
+        }
+    }
+
+    fn modified(&self, key: &str) -> Result<Option<SystemTime>> {
+        match fs::metadata(self.path(key)) {
+            Ok(m) => Ok(m.modified().ok()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn list_dirs(&self, prefix: &str) -> Result<Option<Vec<String>>> {
+        let dir = self.path(prefix);
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Some(Vec::new())),
+            Err(e) => return Err(e).with_context(|| format!("listing {}", dir.display())),
+        };
+        let mut out = Vec::new();
+        for e in entries.flatten() {
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                out.push(e.file_name().to_string_lossy().into_owned());
+            }
+        }
+        Ok(Some(out))
+    }
+
+    fn delete_prefix(&self, prefix: &str) -> Result<()> {
+        if prefix.trim_matches('/').is_empty() {
+            bail!("refusing to delete the store root");
+        }
+        let dir = self.path(prefix);
+        match fs::remove_dir_all(&dir) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e).with_context(|| format!("removing {}", dir.display())),
         }
     }
 
@@ -350,6 +405,25 @@ impl ObjectStore for S3ObjectStore {
         })
     }
 
+    fn modified(&self, key: &str) -> Result<Option<SystemTime>> {
+        let (client, bucket, full) = (self.client.clone(), self.bucket.clone(), self.full_key(key));
+        self.run(async move {
+            match client.head_object().bucket(&bucket).key(&full).send().await {
+                Ok(resp) => Ok(resp
+                    .last_modified()
+                    .and_then(|t| SystemTime::try_from(*t).ok())),
+                Err(e) => {
+                    let status = e.raw_response().map(|r| r.status().as_u16());
+                    if status == Some(404) {
+                        Ok(None)
+                    } else {
+                        Err(anyhow!("s3 head {full}: {}", s3_detail(&e)))
+                    }
+                }
+            }
+        })
+    }
+
     fn describe(&self) -> String {
         format!("s3://{}/{}", self.bucket, self.prefix)
     }
@@ -421,6 +495,18 @@ impl ObjectStore for LocalFirstObjectStore {
         // Local ONLY — `size` drives local-authoritative manifest existence checks.
         // A shared fallback would do an S3 HEAD per manifest op and couple writes to S3.
         self.local.size(key)
+    }
+
+    fn modified(&self, key: &str) -> Result<Option<SystemTime>> {
+        self.local.modified(key)
+    }
+
+    fn list_dirs(&self, prefix: &str) -> Result<Option<Vec<String>>> {
+        self.local.list_dirs(prefix)
+    }
+
+    fn delete_prefix(&self, prefix: &str) -> Result<()> {
+        self.local.delete_prefix(prefix)
     }
 
     fn describe(&self) -> String {

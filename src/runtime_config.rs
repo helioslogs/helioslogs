@@ -32,6 +32,8 @@ pub enum Knob {
     BlockFlushSecs,
     BlockSyncSecs,
     RetentionSweepSecs,
+    AlertRetentionDays,
+    ChatRetentionDays,
     AggMaxPartitions,
     QueryCacheMb,
     QueryThreads,
@@ -164,6 +166,32 @@ pub const KNOBS: &[KnobDef] = &[
         description: "How often the retention sweeper checks for day-partitions past their retention.",
     },
     KnobDef {
+        id: Knob::AlertRetentionDays,
+        slug: "alert_retention_days",
+        env: "HELIOS_ALERT_RETENTION_DAYS",
+        key: "tunable.alert_retention_days",
+        category: "Retention",
+        label: "Alert retention",
+        unit: "days",
+        default: 14,
+        min_value: 0,
+        live: true,
+        description: "Alerts and monitor-run traces older than this are deleted by the retention sweep. 0 keeps them forever.",
+    },
+    KnobDef {
+        id: Knob::ChatRetentionDays,
+        slug: "chat_retention_days",
+        env: "HELIOS_CHAT_RETENTION_DAYS",
+        key: "tunable.chat_retention_days",
+        category: "Retention",
+        label: "Chat retention",
+        unit: "days",
+        default: 0,
+        min_value: 0,
+        live: true,
+        description: "User AI chat conversations idle longer than this are deleted by the retention sweep. 0 keeps them forever.",
+    },
+    KnobDef {
         id: Knob::AggMaxPartitions,
         slug: "agg_max_partitions",
         env: "HELIOS_AGG_MAX_PARTITIONS",
@@ -282,6 +310,14 @@ pub fn retention_sweep_interval() -> Duration {
 }
 pub fn retention_sweeper_lease_ttl() -> Duration {
     retention_sweep_interval() * 3
+}
+/// Alert + monitor-run retention in days; `None` = keep forever.
+pub fn alert_retention_days() -> Option<u64> {
+    Some(raw_value(Knob::AlertRetentionDays)).filter(|&d| d > 0)
+}
+/// Chat conversation retention in days (by last activity); `None` = keep forever.
+pub fn chat_retention_days() -> Option<u64> {
+    Some(raw_value(Knob::ChatRetentionDays)).filter(|&d| d > 0)
 }
 pub fn agg_max_partitions() -> usize {
     raw_value(Knob::AggMaxPartitions) as usize
@@ -403,5 +439,20 @@ mod tests {
         let k = def(Knob::QueryCacheMb);
         assert_eq!(resolve(k, Some("0")), 0);
         assert_eq!(resolve(k, Some("512")), 512);
+    }
+
+    #[test]
+    fn alert_retention_defaults_to_14_and_allows_zero() {
+        let k = def(Knob::AlertRetentionDays);
+        assert_eq!(resolve(k, None), 14);
+        assert_eq!(resolve(k, Some("0")), 0);
+        assert_eq!(resolve(k, Some("30")), 30);
+    }
+
+    #[test]
+    fn chat_retention_defaults_to_keep_forever() {
+        let k = def(Knob::ChatRetentionDays);
+        assert_eq!(resolve(k, None), 0);
+        assert_eq!(resolve(k, Some("14")), 14);
     }
 }

@@ -5,6 +5,7 @@
 //! = keep forever). Deletion leaves an **empty-manifest tombstone** in the
 //! shared store — never a missing manifest — so the seeder won't re-upload a
 //! dropped partition and every replica's puller converges to zero blocks.
+//! Tombstones are reaped after [`TOMBSTONE_GRACE_DAYS`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,6 +32,10 @@ pub struct RetentionCtx {
 pub struct SweepResult {
     pub partitions_dropped: usize,
     pub blocks_deleted: usize,
+    pub tombstones_reaped: usize,
+    pub alerts_deleted: usize,
+    pub monitor_runs_deleted: usize,
+    pub chats_deleted: usize,
 }
 
 /// Env var pinning the global default retention; wins over the control setting.
@@ -67,18 +72,63 @@ pub async fn run_sweeper(ctx: Arc<RetentionCtx>, gate: Arc<dyn CompactionGate>) 
         tokio::time::sleep(crate::runtime_config::retention_sweep_interval()).await;
         let leader = gate.should_compact().await;
         match sweep_once(&ctx, leader).await {
-            Ok(r) if r.partitions_dropped > 0 => tracing::info!(
-                partitions = r.partitions_dropped,
-                blocks = r.blocks_deleted,
-                "retention: dropped expired partitions"
-            ),
+            Ok(r)
+                if r.partitions_dropped
+                    + r.tombstones_reaped
+                    + r.alerts_deleted
+                    + r.monitor_runs_deleted
+                    + r.chats_deleted
+                    > 0 =>
+            {
+                tracing::info!(
+                    partitions = r.partitions_dropped,
+                    blocks = r.blocks_deleted,
+                    tombstones_reaped = r.tombstones_reaped,
+                    alerts = r.alerts_deleted,
+                    monitor_runs = r.monitor_runs_deleted,
+                    chats = r.chats_deleted,
+                    "retention: dropped expired data"
+                )
+            }
             Ok(_) => {}
             Err(e) => tracing::warn!("retention sweep failed: {e:#}"),
         }
     }
 }
 
+/// One retention pass: expired control-plane records (leader only), then day-partitions.
 pub async fn sweep_once(ctx: &RetentionCtx, leader: bool) -> Result<SweepResult> {
+    let mut r = SweepResult::default();
+    if leader {
+        sweep_control(&ctx.control, &mut r).await?;
+    }
+    let p = sweep_partitions(ctx, leader).await?;
+    Ok(SweepResult {
+        partitions_dropped: p.partitions_dropped,
+        blocks_deleted: p.blocks_deleted,
+        tombstones_reaped: p.tombstones_reaped,
+        ..r
+    })
+}
+
+/// Delete alerts + monitor runs past alert retention, and chats idle past chat retention.
+async fn sweep_control(control: &Control, r: &mut SweepResult) -> Result<()> {
+    if let Some(cutoff) = cutoff_ms(crate::runtime_config::alert_retention_days()) {
+        r.alerts_deleted = control.alert_purge_before(cutoff).await?;
+        r.monitor_runs_deleted = control.conv_purge_before("monitor", cutoff).await?;
+    }
+    if let Some(cutoff) = cutoff_ms(crate::runtime_config::chat_retention_days()) {
+        r.chats_deleted = control.conv_purge_before("chat", cutoff).await?;
+    }
+    Ok(())
+}
+
+/// Epoch-millis instant `days` ago.
+fn cutoff_ms(days: Option<u64>) -> Option<i64> {
+    days.map(|d| chrono::Utc::now().timestamp_millis() - d as i64 * 86_400_000)
+}
+
+async fn sweep_partitions(ctx: &RetentionCtx, leader: bool) -> Result<SweepResult> {
     let global_days: Option<i64> =
         effective_default_days(ctx.control.get_setting(KEY_RETENTION_DEFAULT_DAYS).await?);
     let env_days: HashMap<String, Option<i64>> = ctx
@@ -97,7 +147,6 @@ pub async fn sweep_once(ctx: &RetentionCtx, leader: bool) -> Result<SweepResult>
         local: ctx.local.clone(),
         shared: ctx.shared.clone(),
         pending: ctx.pending.clone(),
-        root: ctx.catalog.root().to_path_buf(),
     };
     let catalog = ctx.catalog.clone();
     let result = tokio::task::spawn_blocking(move || {
@@ -130,16 +179,21 @@ pub async fn sweep_once(ctx: &RetentionCtx, leader: bool) -> Result<SweepResult>
             if !owed.is_empty() {
                 ctx2.pending.remove(&k, &owed);
             }
-            if !leader {
-                continue;
-            }
-            match drop_partition(&ctx2, &k) {
-                Ok(blocks) => {
-                    out.partitions_dropped += 1;
-                    out.blocks_deleted += blocks;
+            if leader {
+                let reap = is_expired(k.day, today, days + TOMBSTONE_GRACE_DAYS);
+                match drop_partition(&ctx2, &k, reap) {
+                    Ok(d) => {
+                        out.partitions_dropped += usize::from(d.blocks > 0);
+                        out.blocks_deleted += d.blocks;
+                        out.tombstones_reaped += usize::from(d.reaped);
+                    }
+                    Err(e) => tracing::warn!(env = %k.env, index = %k.index, day = %k.day_string(),
+                        "retention: drop failed: {e:#}"),
                 }
-                Err(e) => tracing::warn!(env = %k.env, index = %k.index, day = %k.day_string(),
-                    "retention: drop failed: {e:#}"),
+            }
+            if let Err(e) = purge_local_if_empty(&ctx2, &k) {
+                tracing::warn!(env = %k.env, index = %k.index, day = %k.day_string(),
+                    "retention: local purge failed: {e:#}");
             }
         }
         out
@@ -152,7 +206,16 @@ struct RetentionSnapshot {
     local: BlockStore,
     shared: Option<BlockStore>,
     pending: Arc<PendingStore>,
-    root: std::path::PathBuf,
+}
+
+/// Days a shared tombstone outlives expiry before it's reaped.
+const TOMBSTONE_GRACE_DAYS: i64 = 2;
+
+/// What a leader drop did to one partition.
+#[derive(Debug, Default, PartialEq)]
+struct Dropped {
+    blocks: usize,
+    reaped: bool,
 }
 
 /// Expired iff the partition day is strictly older than `today - days`.
@@ -174,27 +237,28 @@ fn empty_manifest(store: &BlockStore, key: &PartitionKey) -> Result<usize> {
     Ok(ids.len())
 }
 
-fn drop_partition(ctx: &RetentionSnapshot, key: &PartitionKey) -> Result<usize> {
-    let mut blocks = 0;
+fn drop_partition(ctx: &RetentionSnapshot, key: &PartitionKey, reap: bool) -> Result<Dropped> {
+    let mut out = Dropped::default();
     if let Some(shared) = &ctx.shared {
         // Tombstone, not removal: an absent shared manifest would let the
         // seeder re-upload this partition from any replica still caching it.
-        blocks += empty_manifest(shared, key)?;
-    }
-    blocks += empty_manifest(&ctx.local, key)?;
-    if ctx.shared.is_none() {
-        // Local-only: no resurrection vector, remove the whole partition dir.
-        // A racing late-backfill write may recreate it; the next sweep re-drops.
-        let path = ctx
-            .root
-            .join(&key.env)
-            .join(&key.index)
-            .join(key.day_string());
-        if path.exists() {
-            let _ = std::fs::remove_dir_all(&path);
+        let n = empty_manifest(shared, key)?;
+        if n == 0 && reap && shared.has_manifest(key)? {
+            shared.purge_partition(key)?;
+            out.reaped = true;
         }
+        out.blocks += n;
     }
-    Ok(blocks)
+    out.blocks += empty_manifest(&ctx.local, key)?;
+    Ok(out)
+}
+
+/// Remove an expired partition's local dir once its manifest is empty (any node).
+fn purge_local_if_empty(ctx: &RetentionSnapshot, key: &PartitionKey) -> Result<()> {
+    if ctx.local.load_manifest(key)?.blocks.is_empty() {
+        ctx.local.purge_partition(key)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -251,10 +315,10 @@ mod tests {
             local: local.clone(),
             shared: Some(shared.clone()),
             pending: Arc::new(PendingStore::new(ld.path())),
-            root: ld.path().to_path_buf(),
         };
-        let blocks = drop_partition(&ctx, &k).unwrap();
-        assert_eq!(blocks, 2); // one shared + one local id
+        let d = drop_partition(&ctx, &k, true).unwrap();
+        assert_eq!(d.blocks, 2); // one shared + one local id
+        assert!(!d.reaped);
 
         // Tombstone: manifest still exists, but holds zero blocks.
         assert!(shared.has_manifest(&k).unwrap());
@@ -262,26 +326,52 @@ mod tests {
         assert!(local.load_manifest(&k).unwrap().blocks.is_empty());
 
         // Idempotent re-run.
-        assert_eq!(drop_partition(&ctx, &k).unwrap(), 0);
+        assert_eq!(drop_partition(&ctx, &k, false).unwrap(), Dropped::default());
+        assert!(shared.has_manifest(&k).unwrap());
     }
 
     #[test]
-    fn drop_local_only_removes_partition_dir() {
+    fn tombstone_reaped_on_a_later_sweep_with_orphans() {
+        let (ld, sd) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let (local, shared) = (BlockStore::new(ld.path()), BlockStore::new(sd.path()));
+        let k = key("2026-01-01");
+        let a = shared.append_block(&k, &blk(1, "a")).unwrap();
+        shared.put_block(&k, "orphan", &blk(2, "b")).unwrap();
+        let ctx = RetentionSnapshot {
+            local,
+            shared: Some(shared.clone()),
+            pending: Arc::new(PendingStore::new(ld.path())),
+        };
+        assert_eq!(drop_partition(&ctx, &k, true).unwrap().blocks, 1);
+        assert!(shared.block_size(&k, &a).is_none());
+
+        let d = drop_partition(&ctx, &k, true).unwrap();
+        assert!(d.reaped);
+        assert!(!shared.has_manifest(&k).unwrap());
+        assert!(shared.list_partitions().unwrap().is_empty());
+        assert!(!sd.path().join("default/web/2026-01-01").exists());
+    }
+
+    #[test]
+    fn local_dir_purged_only_once_empty() {
         let ld = TempDir::new().unwrap();
         let local = BlockStore::new(ld.path());
         let k = key("2026-01-01");
         local.append_block(&k, &blk(1, "a")).unwrap();
         let pdir = ld.path().join("default").join("web").join("2026-01-01");
-        assert!(pdir.exists());
-
         let ctx = RetentionSnapshot {
             local: local.clone(),
             shared: None,
             pending: Arc::new(PendingStore::new(ld.path())),
-            root: ld.path().to_path_buf(),
         };
-        drop_partition(&ctx, &k).unwrap();
+
+        purge_local_if_empty(&ctx, &k).unwrap();
+        assert!(pdir.exists());
+
+        drop_partition(&ctx, &k, false).unwrap();
+        purge_local_if_empty(&ctx, &k).unwrap();
         assert!(!pdir.exists());
+        purge_local_if_empty(&ctx, &k).unwrap();
     }
 
     #[tokio::test]
@@ -321,6 +411,7 @@ mod tests {
         let r = sweep_once(&ctx, true).await.unwrap();
         assert_eq!(r.partitions_dropped, 1, "only the expired default-env day");
         assert!(local.load_manifest(&old_default).unwrap().blocks.is_empty());
+        assert!(!local.partition_exists(&old_default), "local dir purged");
         assert_eq!(local.load_manifest(&old_keeper).unwrap().blocks.len(), 1);
         assert_eq!(local.load_manifest(&fresh).unwrap().blocks.len(), 1);
 

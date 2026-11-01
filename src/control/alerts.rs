@@ -16,7 +16,7 @@ pub struct Alert {
     /// `#[serde(default)]` so alerts written before this field stay readable.
     #[serde(default)]
     pub env: String,
-    /// Conversation id of the monitor run that raised this (`conv_*`).
+    /// Conversation id of the monitor run that raised this (`run_*`; older runs `conv_*`).
     pub conversation_id: Option<String>,
     pub severity: String,
     pub title: String,
